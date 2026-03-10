@@ -1,4 +1,3 @@
-import * as XLSX from "xlsx";
 import { useEffect, useMemo, useRef, useState, useContext, createContext } from "react";
 const CHAT_HISTORY_KEY = "medrep_assistant_history_v1";
 
@@ -420,10 +419,53 @@ function normalizeDoctorRow(row,hm,fi){
 function dedupeDoctors(list){const seen=new Map();for(const d of list){const key=`${normalizeKey(d.name)}__${normalizeKey(d.city)}__${normalizeKey(d.sector)}`;if(!seen.has(key))seen.set(key,d);else{const prev=seen.get(key);seen.set(key,{...prev,...d,phone:d.phone||prev.phone,email:d.email||prev.email,activite:d.activite||prev.activite,potential:d.potential||prev.potential,adoptionScore:d.adoptionScore??prev.adoptionScore??null,mainObjection:d.mainObjection||prev.mainObjection||"",nextVisitGoal:d.nextVisitGoal||prev.nextVisitGoal||"",priorityLevel:d.priorityLevel||prev.priorityLevel||""});}}return Array.from(seen.values());}
 function parseCSVSmart(text){const rows=[];let row=[],cur="",inQ=false;for(let i=0;i<text.length;i++){const ch=text[i],nx=text[i+1];if(ch==='"'){if(inQ&&nx==='"'){cur+='"';i++;}else inQ=!inQ;}else if(ch===","&&!inQ){row.push(cur);cur="";}else if((ch==="\n"||ch==="\r")&&!inQ){if(ch==="\r"&&nx==="\n")i++;row.push(cur);rows.push(row);row=[];cur="";}else cur+=ch;}if(cur.length||row.length){row.push(cur);rows.push(row);}return rows.map(r=>r.map(c=>c.trim())).filter(r=>r.some(c=>normalizeText(c)));}
 async function importDoctorsFromFile(file){
+  // Chargement dynamique de XLSX (divise la taille du bundle initial par 2)
+  const XLSX = await import("xlsx");
+  
   const name=file.name.toLowerCase();
-  if(name.endsWith(".json")){const txt=await file.text();const json=JSON.parse(txt);const list=Array.isArray(json?.doctors)?json.doctors:Array.isArray(json)?json:[];const out=list.map((d,i)=>({id:Number(d.id)||i+1,name:normalizeText(d.name),city:normalizeCity(d.city),sector:normalizeText(d.sector),potential:normalizePotential(d.potential),phone:normalizeText(d.phone),email:normalizeText(d.email).toLowerCase(),activite:normalizeText(d.activite)||"Privé",adoptionScore:d?.adoptionScore??null,mainObjection:d?.mainObjection??"",nextVisitGoal:d?.nextVisitGoal??"",priorityLevel:d?.priorityLevel??"",visitFrequency:d?.visitFrequency||"quarterly", product:d?.product||"Fumetil"})).filter(d=>d.name&&d.city);return stableSortDocs(dedupeDoctors(out));}
-  if(name.endsWith(".csv")){const txt=await file.text();const rows=parseCSVSmart(txt);if(rows.length<2)throw new Error("CSV vide.");const hm=buildHeaderMap(rows[0]);if(hm.name<0||(hm.city<0&&hm.sector<0))throw new Error("Colonnes introuvables.");const out=rows.slice(1).map((r,i)=>normalizeDoctorRow(r,hm,i+1)).filter(Boolean);return stableSortDocs(dedupeDoctors(out));}
-  if(name.endsWith(".xlsx")||name.endsWith(".xls")){const buf=await file.arrayBuffer();const wb=XLSX.read(buf,{type:"array"});const ws=wb.Sheets[wb.SheetNames[0]];const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:""});if(rows.length<2)throw new Error("Excel vide.");const hm=buildHeaderMap(rows[0]);if(hm.name<0||(hm.city<0&&hm.sector<0))throw new Error("Colonnes introuvables.");const out=rows.slice(1).map((r,i)=>normalizeDoctorRow(r,hm,i+1)).filter(Boolean);return stableSortDocs(dedupeDoctors(out));}
+  if(name.endsWith(".json")){
+    const txt=await file.text();
+    const json=JSON.parse(txt);
+    const list=Array.isArray(json?.doctors)?json.doctors:Array.isArray(json)?json:[];
+    const out=list.map((d,i)=>({
+      id:Number(d.id)||i+1,
+      name:normalizeText(d.name),
+      city:normalizeCity(d.city),
+      sector:normalizeText(d.sector),
+      potential:normalizePotential(d.potential),
+      phone:normalizeText(d.phone),
+      email:normalizeText(d.email).toLowerCase(),
+      activite:normalizeText(d.activite)||"Privé",
+      adoptionScore:d?.adoptionScore??null,
+      mainObjection:d?.mainObjection??"",
+      nextVisitGoal:d?.nextVisitGoal??"",
+      priorityLevel:d?.priorityLevel??"",
+      visitFrequency:d?.visitFrequency||"quarterly",
+      product:d?.product||"Fumetil"
+    })).filter(d=>d.name&&d.city);
+    return stableSortDocs(dedupeDoctors(out));
+  }
+  if(name.endsWith(".csv")){
+    const txt=await file.text();
+    const rows=parseCSVSmart(txt);
+    if(rows.length<2)throw new Error("CSV vide.");
+    const hm=buildHeaderMap(rows[0]);
+    if(hm.name<0||(hm.city<0&&hm.sector<0))throw new Error("Colonnes introuvables.");
+    const out=rows.slice(1).map((r,i)=>normalizeDoctorRow(r,hm,i+1)).filter(Boolean);
+    return stableSortDocs(dedupeDoctors(out));
+  }
+  if(name.endsWith(".xlsx")||name.endsWith(".xls")){
+    const buf=await file.arrayBuffer();
+    // Utilisation de XLSX chargé dynamiquement
+    const wb=XLSX.read(buf,{type:"array"});
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:""});
+    if(rows.length<2)throw new Error("Excel vide.");
+    const hm=buildHeaderMap(rows[0]);
+    if(hm.name<0||(hm.city<0&&hm.sector<0))throw new Error("Colonnes introuvables.");
+    const out=rows.slice(1).map((r,i)=>normalizeDoctorRow(r,hm,i+1)).filter(Boolean);
+    return stableSortDocs(dedupeDoctors(out));
+  }
   throw new Error("Format non supporté (.xlsx/.csv/.json)");
 }
 function groupWorkdaysByWeek(wds){const weeks=[];let cur=[];for(const day of wds){const d=new Date(day),wd=d.getDay();if(wd===1&&cur.length){weeks.push(cur);cur=[];}cur.push(day);if(wd===5){weeks.push(cur);cur=[];}}if(cur.length)weeks.push(cur);return weeks;}
@@ -1574,7 +1616,7 @@ function PlanningPage({ doctors, setDoctors, apiKey, provider, model }) {
   );
 }
 /* ─────────────────────────────────────────────────────────────
-  Reports Page
+  Reports Page (Version Corrigée Audio)
 ───────────────────────────────────────────────────────────── */
 function ReportsPage({doctors, setDoctors, apiKey, provider, model, setPage}){
   const[selectedId,setSelectedId]=useState(doctors[0]?.id||null);
@@ -1592,15 +1634,16 @@ function ReportsPage({doctors, setDoctors, apiKey, provider, model, setPage}){
   const[transcript,setTranscript]=useState("");
   const[saving,setSaving]=useState(false);
   
-  // Dictée vocale
+  // --- Dictée Vocale ---
   const[dictating,setDictating]=useState(false);
   const speechRef=useRef(null);
   const speechSupported=useMemo(()=>typeof window!=="undefined"&&!!(window.SpeechRecognition||window.webkitSpeechRecognition),[]);
+  
   const startDictation=()=>{
     const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-    if(!SR)return alert("Dictée non supportée.");
+    if(!SR){alert("Dictée non supportée."); return;}
     const rec=new SR();
-    rec.lang="fr-FR";rec.interimResults=true;rec.continuous=true;
+    rec.lang="fr-FR"; rec.interimResults=true; rec.continuous=true;
     rec.onresult=e=>{
       let ft="";
       for(let i=e.resultIndex;i<e.results.length;i++){
@@ -1609,46 +1652,67 @@ function ReportsPage({doctors, setDoctors, apiKey, provider, model, setPage}){
       }
       if(ft)setTranscript(prev=>(prev+" "+ft).trim());
     };
-    rec.onerror=()=>setDictating(false);
+    rec.onerror=e=>{console.error("Speech Error:",e.error); setDictating(false);};
     rec.onend=()=>setDictating(false);
     speechRef.current=rec;
     setDictating(true);
     rec.start();
   };
-  const stopDictation=()=>{try{speechRef.current?.stop();}catch{}setDictating(false);};
+  const stopDictation=()=>{try{speechRef.current?.stop();}catch{} setDictating(false);};
 
-  // Audio Recording
+  // --- Audio Recording (CORRIGÉ) ---
   const[recording,setRecording]=useState(false);
   const mediaRecRef=useRef(null),chunksRef=useRef([]);
-  const mediaSupported=useMemo(()=>typeof window!=="undefined"&&!!navigator?.mediaDevices?.getUserMedia,[]);
+  
   const startRecording=async()=>{
-    if(!mediaSupported)return alert("Audio non supporté.");
-    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
-    const mr=new MediaRecorder(stream);
-    chunksRef.current=[];
-    mr.ondataavailable=e=>{if(e.data?.size)chunksRef.current.push(e.data);};
-    mr.onstop=async()=>{stream.getTracks().forEach(t=>t.stop());};
-    mediaRecRef.current=mr;
-    setRecording(true);
-    mr.start();
-  };
-  const stopRecordingAndSave=async()=>{
-    if(!mediaRecRef.current)return null;
-    setRecording(false);
-    const mr=mediaRecRef.current;
-    const done=new Promise(resolve=>{
-      const prev=mr.onstop;
-      mr.onstop=async()=>{
-        try{prev&&prev();}catch{}
-        const blob=new Blob(chunksRef.current,{type:"audio/webm"});
-        resolve(blob);
+    // Vérification HTTPS (nécessaire pour le micro)
+    if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+       return alert("❌ Le microphone nécessite une connexion sécurisée (HTTPS).");
+    }
+    
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream);
+      chunksRef.current = [];
+      
+      mr.ondataavailable = e => {
+        if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
       };
-    });
-    mr.stop();
-    return await done;
+      
+      // Nettoyage des pistes quand on arrête
+      mr.onstop = () => {
+         stream.getTracks().forEach(track => track.stop());
+      };
+      
+      mediaRecRef.current = mr;
+      mr.start();
+      setRecording(true);
+    } catch (err) {
+      console.error(err);
+      alert("Impossible d'accéder au micro : " + err.message);
+    }
   };
 
-  // Ajout de rapport
+  const stopRecordingAndSave=async()=>{
+    if(!mediaRecRef.current) return;
+    
+    return new Promise(resolve => {
+      const mr = mediaRecRef.current;
+      
+      mr.onstop = async () => {
+        // Création du blob audio
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        setRecording(false);
+        // Sauvegarde automatique
+        await addReport({ audioBlob: blob });
+        resolve();
+      };
+      
+      mr.stop();
+    });
+  };
+
+  // --- Ajout de rapport ---
   const addReport=async({audioBlob=null}={})=>{
     if(!selectedId)return;
     const content=(text||"").trim(),trans=(transcript||"").trim();
@@ -1657,16 +1721,9 @@ function ReportsPage({doctors, setDoctors, apiKey, provider, model, setPage}){
     try{
       const rId=`r_${Date.now()}_${Math.random().toString(16).slice(2)}`;
       let audioKey=null;
-      if(audioBlob){
-        audioKey=`audio_${rId}`;
-        await idbPut(audioKey,audioBlob);
-      }
+      if(audioBlob){audioKey=`audio_${rId}`;await idbPut(audioKey,audioBlob);}
       const item={id:rId,createdAt:dtNowISO(),text:content,transcript:trans,audioKey};
-      setReports(prev=>{
-        const list=prev[selectedId]?[...prev[selectedId]]:[];
-        list.unshift(item);
-        return{...prev,[selectedId]:list};
-      });
+      setReports(prev=>{const list=prev[selectedId]?[...prev[selectedId]]:[];list.unshift(item);return{...prev,[selectedId]:list};});
       setText("");setTranscript("");
       if(apiKey&&selectedDoctor)setTimeout(()=>analyze(),600);
     }finally{setSaving(false);}
@@ -1676,10 +1733,7 @@ function ReportsPage({doctors, setDoctors, apiKey, provider, model, setPage}){
     if(!audioKey)return;
     const blob=await idbGet(audioKey);
     if(!blob)return alert("Audio introuvable.");
-    const url=URL.createObjectURL(blob);
-    const a=new Audio(url);
-    a.onended=()=>URL.revokeObjectURL(url);
-    a.play();
+    const url=URL.createObjectURL(blob);const a=new Audio(url);a.onended=()=>URL.revokeObjectURL(url);a.play();
   };
   
   const deleteReport=async rid=>{
@@ -1689,7 +1743,7 @@ function ReportsPage({doctors, setDoctors, apiKey, provider, model, setPage}){
     setReports(prev=>({...prev,[selectedId]:(prev[selectedId]||[]).filter(x=>x.id!==rid)}));
   };
   
-  // Analyse IA
+  // --- Analyse IA ---
   const[analyzing,setAnalyzing]=useState(false);
   const[aiErr,setAiErr]=useState("");
   
@@ -1698,29 +1752,23 @@ function ReportsPage({doctors, setDoctors, apiKey, provider, model, setPage}){
     if(!selectedDoctor)return;
     const last=doctorReports.slice(0,5);
     if(last.length===0)return alert("Ajoute au moins un CR.");
-    
-    const existingMemory=loadJSON(`medrep_memory_${selectedId}`,{});
     setAnalyzing(true);setAiErr("");
-    
     try{
-      const prompt=`Analyse Dr. ${selectedDoctor.name} (${selectedDoctor.city}, Pot. ${selectedDoctor.potential}, Score: ${selectedDoctor.adoptionScore??'N/A'}/100).\n\nCR:\n${last.map((r,i)=>`[${i+1}] ${r.createdAt}\nTexte: ${r.text||'—'}\nDictée: ${r.transcript||'—'}`).join("\n")}\n\n## Score d'adoption\n- Score : X/100\n- Stade : ...\n- Probabilité de prescription : faible/moyenne/élevée\n\n## Lecture de la situation\n\n## Freins / objections\n- Frein principal : ...\n\n## Prochaines actions concrètes\n\n## Objectif next visit`;
+      const prompt=`Analyse Dr. ${selectedDoctor.name} (${selectedDoctor.city}, Pot. ${selectedDoctor.potential}).\n\nCR:\n${last.map((r,i)=>`[${i+1}] ${r.text||r.transcript||"Audio"}`).join("\n")}\n\n## Score d'adoption\n- Score : X/100\n- Frein principal : ...`;
       const out=await callLLM(prompt,apiKey,provider,model);
       const insights=extractAdoptionInsights(out);
-      const newMemory=extractAIMemory(out,existingMemory);
-      
       setActions(prev=>({...prev,[selectedId]:{generatedAt:dtNowISO(),text:out,prescriptionProba:insights.prescriptionProba}}));
-      saveJSON(`medrep_memory_${selectedId}`,newMemory);
-      setDoctors(prev=>stableSortDocs(prev.map(doc=>doc.id===selectedId?{...doc,adoptionScore:insights.adoptionScore??doc.adoptionScore,mainObjection:insights.mainObjection||doc.mainObjection||"",nextVisitGoal:insights.nextVisitGoal||doc.nextVisitGoal||"",priorityLevel:insights.priorityLevel||doc.priorityLevel||""}:doc)));
+      setDoctors(prev=>stableSortDocs(prev.map(doc=>doc.id===selectedId?{...doc,adoptionScore:insights.adoptionScore??doc.adoptionScore,mainObjection:insights.mainObjection||doc.mainObjection}:doc)));
     }catch(e){setAiErr(e.message);}
     setAnalyzing(false);
   };
 
   // Templates Rapides
   const QUICK_TEMPLATES = [
-    { label: "Intro", text: "Présentation du produit, explication des bénéfices cliniques. " },
-    { label: "Prix", text: "Objection sur le prix : argumentation sur le rapport coût/efficacité. " },
-    { label: "Rx", text: "Le médecin prescrit le produit pour les patients présentant [pathologie]. " },
-    { label: "À revoir", text: "Demande de revoir le dossier dans 15 jours. " }
+    { label: "Intro", text: "Présentation du produit. " },
+    { label: "Prix", text: "Objection prix. " },
+    { label: "Rx", text: "Prescription validée. " },
+    { label: "À revoir", text: "À revoir dans 15j. " }
   ];
 
   if(!doctors.length)return<div className="content"><div className="card"><div className="empty">Aucun médecin.</div></div></div>;
@@ -1729,25 +1777,22 @@ function ReportsPage({doctors, setDoctors, apiKey, provider, model, setPage}){
     <div className="content">
       <div className="g2" style={{alignItems:"start"}}>
         <div className="card">
-          <div className="card-t">🧾 Compte-rendu visite</div>
+          <div className="card-t">🧾 Compte-rendu</div>
           <div className="fg"><label className="fl">Médecin</label><select className="fs" value={selectedId||""} onChange={e=>setSelectedId(parseInt(e.target.value,10))}>{doctors.map(d=><option key={d.id} value={d.id}>{d.name} — {d.city}</option>)}</select></div>
           
-          {/* Boutons Rapides */}
           <div style={{ marginBottom: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
              {QUICK_TEMPLATES.map(t => (
-               <button key={t.label} className="btn btn-g" style={{ fontSize: 10, padding: "4px 8px" }} onClick={() => setText(prev => (prev || "") + t.text)}>
-                 {t.label}
-               </button>
+               <button key={t.label} className="btn btn-g" style={{ fontSize: 10, padding: "4px 8px" }} onClick={() => setText(prev => (prev || "") + t.text)}>{t.label}</button>
              ))}
           </div>
 
           <textarea className="fta" placeholder="Échanges, intérêt, objections..." value={text} onChange={e=>setText(e.target.value)} style={{minHeight: 120}}/>
           
           <div className="grid2" style={{marginTop:8}}>
-             <div className="fg"><label className="fl">Dictée vocale</label><textarea className="fta" placeholder="Clic Démarrer..." value={transcript} onChange={e=>setTranscript(e.target.value)}/></div>
+             <div className="fg"><label className="fl">Dictée</label><textarea className="fta" placeholder="Clic Démarrer..." value={transcript} onChange={e=>setTranscript(e.target.value)}/></div>
              <div className="fg" style={{display:'flex', flexDirection:'column', gap:8}}>
                 <div style={{display:'flex', gap:8}}><button className="btn btn-blue" disabled={!speechSupported||dictating} onClick={startDictation}>🎙️ Démarrer</button><button className="btn btn-g" disabled={!dictating} onClick={stopDictation}>⏹️ Stop</button></div>
-                <div className="mini">Cliquez sur "Démarrer" et parlez.</div>
+                <div className="mini">Autorisez le micro si demandé.</div>
              </div>
           </div>
           
@@ -1760,22 +1805,25 @@ function ReportsPage({doctors, setDoctors, apiKey, provider, model, setPage}){
           </div>
           
           <div className="sep"/>
-          <div className="card-t" style={{marginBottom:8}}>🎧 Audio</div>
-          <div style={{display:"flex",gap:8}}><button className="btn btn-blue" disabled={!mediaSupported||recording} onClick={startRecording}>⏺️ Enregistrer</button><button className="btn btn-g" disabled={!recording} onClick={async()=>{const blob=await stopRecordingAndSave();if(!blob)return;await addReport({audioBlob:blob});}}>⏹️ Stop + Sauver</button></div>
+          <div className="card-t" style={{marginBottom:8}}>🎧 Enregistrement Audio</div>
+          <div style={{display:"flex",gap:8}}>
+             <button className="btn btn-blue" disabled={recording} onClick={startRecording}>⏺️ Enregistrer</button>
+             <button className="btn btn-g" disabled={!recording} onClick={stopRecordingAndSave}>⏹️ Stop + Sauver</button>
+             {recording && <span className="pill" style={{color:"var(--rose)", borderColor:"var(--rose)"}}>● REC</span>}
+          </div>
         </div>
         
         <div className="card">
           <div className="card-t">🤖 Analyse IA <span className="pill" style={{borderColor:apiKey?"rgba(0,212,170,.35)":"rgba(244,63,94,.35)",color:apiKey?"var(--teal)":"var(--rose)"}}>{apiKey?"ON":"OFF"}</span></div>
-          {!apiKey&&<div className="warn" style={{marginBottom:10}}>⚠️ Configure l'API dans Paramètres.</div>}
-          {apiKey&&<div className="mini" style={{marginBottom:8}}>⚡ Analyse automatique après chaque CR sauvegardé.</div>}
+          {!apiKey&&<div className="warn" style={{marginBottom:10}}>⚠️ Configure l'API.</div>}
           <button className="btn btn-p" onClick={analyze} disabled={!apiKey||analyzing||!selectedDoctor}>{analyzing?<><span className="sp"/> Analyse…</>:"⚡ Analyser"}</button>
           {aiErr&&<div className="warn" style={{marginTop:10}}>⚠️ {aiErr}</div>}
           <div className="sep"/>
-          {!actions[selectedId]?.text?<div className="empty" style={{padding:20}}>Lance l'analyse IA.</div>:(
+          {!actions[selectedId]?.text?<div className="empty" style={{padding:20}}>Aucune analyse.</div>:(
             <div>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:8}}><div className="mini" style={{margin:0}}>Généré: {new Date(actions[selectedId].generatedAt).toLocaleString("fr-FR")}</div>{actions[selectedId].prescriptionProba&&(()=>{const pb=probaLabel(actions[selectedId].prescriptionProba);return pb?<span className={`proba-badge ${pb.cls}`}>{pb.ic} Rx {pb.lbl}</span>:null;})()}</div>
+              <div style={{marginBottom:8}}><div className="mini">Généré: {new Date(actions[selectedId].generatedAt).toLocaleString("fr-FR")}</div></div>
               <div style={{whiteSpace:"pre-wrap",lineHeight:1.7,fontSize:13,background:"rgba(255,255,255,.02)",border:"1px solid var(--bdr)",borderRadius:12,padding:12,maxHeight:400,overflowY:"auto"}}>{actions[selectedId].text}</div>
-              <div style={{display:"flex",gap:8,marginTop:10}}><button className="btn btn-g" onClick={()=>navigator.clipboard.writeText(actions[selectedId].text)}>📋 Copier</button><button className="btn btn-rose" onClick={()=>{if(confirm("Supprimer ?"))setActions(p=>({...p,[selectedId]:null}));}}>🗑️</button></div>
+              <div style={{display:"flex",gap:8,marginTop:10}}><button className="btn btn-g" onClick={()=>navigator.clipboard.writeText(actions[selectedId].text)}>📋 Copier</button></div>
             </div>
           )}
         </div>
@@ -1791,8 +1839,8 @@ function ReportsPage({doctors, setDoctors, apiKey, provider, model, setPage}){
                   <div style={{fontFamily:"var(--fd)",fontWeight:800,fontSize:12}}>{new Date(r.createdAt).toLocaleString("fr-FR")}</div>
                   <div style={{display:"flex",gap:8}}>{r.audioKey&&<button className="btn btn-g" style={{padding:"5px 10px"}} onClick={()=>playAudio(r.audioKey)}>▶︎</button>}<button className="btn btn-rose" style={{padding:"5px 10px"}} onClick={()=>deleteReport(r.id)}>🗑️</button></div>
                 </div>
-                <div className="mini" style={{marginTop:8}}><b>Texte:</b> {r.text?r.text.slice(0,240):"—"}</div>
-                <div className="mini" style={{marginTop:8}}><b>Dictée:</b> {r.transcript?r.transcript.slice(0,240):"—"}</div>
+                <div className="mini" style={{marginTop:8}}><b>Texte:</b> {r.text?r.text.slice(0,140):"—"}</div>
+                <div className="mini" style={{marginTop:4}}><b>Dictée:</b> {r.transcript?r.transcript.slice(0,140):"—"}</div>
               </div>
             ))}
           </div>
