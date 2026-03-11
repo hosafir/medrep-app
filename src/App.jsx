@@ -2250,7 +2250,7 @@ export default function App(){
   // --- Session Management ---
   const [session, setSession] = useState(null);
   const [loadingSession, setLoadingSession] = useState(true);
-
+  const [isSynced, setIsSynced] = useState(false); // Nouvelle ligne
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -2284,7 +2284,9 @@ export default function App(){
       
       // Load doctors
       const cloudDoctors = await loadCloudData(userId, 'medrep_doctors_v1');
-      if (cloudDoctors && Array.isArray(cloudDoctors)) setDoctors(stableSortDocs(cloudDoctors.map(enrich)));
+      if (cloudDoctors && Array.isArray(cloudDoctors)) {
+         setDoctors(stableSortDocs(cloudDoctors.map(enrich)));
+      }
       
       // Load products
       const cloudProducts = await loadCloudData(userId, 'medrep_products');
@@ -2293,10 +2295,12 @@ export default function App(){
       // Load Active Product
       const cloudActive = await loadCloudData(userId, 'medrep_active_product');
       if (cloudActive) setActiveProduct(cloudActive);
+
+      // IMPORTANT : On signale que la sync est finie
+      setIsSynced(true); 
     }
     syncFromCloud();
   }, [session]);
-
   // --- SYNC: Save to LocalStorage (Instant) ---
   useEffect(()=>saveJSON("medrep_doctors_v1",doctors),[doctors]);
   useEffect(()=>{try{localStorage.setItem("medrep_apiKey",apiKey||"");}catch{}},[apiKey]);
@@ -2304,14 +2308,15 @@ export default function App(){
   useEffect(() => saveJSON("medrep_products", products), [products]);
   useEffect(() => saveJSON("medrep_active_product", activeProduct), [activeProduct]);
 
-  // --- SYNC: Save to Cloud (Debounced) ---
+   // --- SYNC: Save to Cloud (Uniquement si synchronisé !) ---
   useEffect(() => {
-    if (!session?.user) return;
+    if (!session?.user || !isSynced) return; // Ajout de la condition !isSynced
+    
     const timer = setTimeout(() => {
       saveCloudData(session.user.id, 'medrep_doctors_v1', doctors);
     }, 2000);
     return () => clearTimeout(timer);
-  }, [doctors, session]);
+  }, [doctors, session, isSynced]); // Ajout de isSynced dans les dépendances
 
   useEffect(() => {
     if (!session?.user) return;
