@@ -1209,6 +1209,10 @@ function DoctorsPage({doctors, setDoctors, activeProduct, products}){
             }}
           ]}>
           <div className="grid2">
+                        <div className="fg">
+              <label className="fl">Spécialité</label>
+              <input className="fi" placeholder="Cardiologie, Neurologie..." value={editing.specialite || ""} onChange={e=>setEditing(p => ({...p, specialite: e.target.value}))}/>
+            </div>
             <div className="fg"><label className="fl">Nom</label><input className="fi" value={editing.name} onChange={e=>setEditing(p=>({...p,name:e.target.value}))}/></div>
             <div className="fg"><label className="fl">Ville</label><input className="fi" value={editing.city} onChange={e=>setEditing(p=>({...p,city:e.target.value}))}/></div>
             <div className="fg"><label className="fl">Potentiel</label><select className="fs" value={editing.potential||"B"} onChange={e=>setEditing(p=>({...p,potential:e.target.value}))}><option value="A">A</option><option value="B">B</option><option value="C">C</option></select></div>
@@ -1432,102 +1436,250 @@ Tonalité: Adaptée au sentiment ${sentiment.lbl}.`;
     </div>
   );
 }
+
+/* ─────────────────────────────────────────────────────────────
+  Helpers & Logic Planning
+───────────────────────────────────────────────────────────── */
+function pickEvenly(days, target) {
+  if (target <= 0) return [];
+  if (target >= days.length) return [...days];
+  const step = days.length / target;
+  const chosen = [];
+  for (let i = 0; i < target; i++) {
+    const idx = Math.floor(i * step);
+    chosen.push(days[idx]);
+  }
+  return Array.from(new Set(chosen)).slice(0, target);
+}
+
+function generatePlanning({ doctors, year, monthIndex, perDay, directives }) {
+  const workdays = listWorkdays(year, monthIndex);
+  const plan = {};
+  workdays.forEach(d => { plan[d] = []; });
+  
+  const usedDoctors = new Set();
+  const weeks = groupWorkdaysByWeek(workdays);
+  
+  // 1. Appliquer les DIRECTIVES
+  const activeDirectives = (directives || []).filter(dir => dir.isActive).sort((a,b) => a.week - b.week);
+
+  activeDirectives.forEach(dir => {
+    const weekDays = weeks[dir.week - 1] || [];
+    const targetDays = weekDays.filter(day => {
+      const d = new Date(day);
+      return dir.days.includes(d.getDay());
+    });
+
+    const candidates = doctors.filter(d => 
+      !usedDoctors.has(d.id) &&
+      (dir.cities.length === 0 || dir.cities.includes(d.city)) &&
+      (dir.specialties.length === 0 || dir.specialties.includes(d.specialite))
+    ).sort((a, b) => potRank(a.potential) - potRank(b.potential));
+
+    let dayIdx = 0;
+    candidates.forEach(doc => {
+      for(let i=0; i<targetDays.length; i++){
+        const dayIndex = (dayIdx + i) % targetDays.length;
+        const day = targetDays[dayIndex];
+        if (plan[day].length < perDay) {
+          plan[day].push(doc.id);
+          usedDoctors.add(doc.id);
+          dayIdx = (dayIndex + 1) % targetDays.length;
+          break;
+        }
+      }
+    });
+  });
+
+  // 2. Remplissage STANDARD
+  const remainingDoctors = doctors.filter(d => !usedDoctors.has(d.id));
+  const remainingSorted = stableSortDocs(remainingDoctors);
+  
+  const clusterDocs = remainingSorted.filter(d => CLUSTER.includes(d.city));
+  const wedThu = workdays.filter(d => isWedThu(d));
+  const targetClusterCount = Math.min(clusterDocs.length, Math.ceil(wedThu.length * (perDay / 2))); 
+  const clusterDays = pickEvenly(wedThu, targetClusterCount);
+
+  const idToDoc = new Map(); doctors.forEach(d => idToDoc.set(d.id, d));
+  const inCluster = id => CLUSTER.includes(idToDoc.get(id)?.city);
+  const canPlace = (id, day) => (!inCluster(id) || isWedThu(day));
+  
+  const takeForDay = (pool, day, k) => {
+    const taken = [];
+    for (let i = 0; i < pool.length && taken.length < k;) {
+      const id = pool[i];
+      if (canPlace(id, day)) { taken.push(id); pool.splice(i, 1); } else i++;
+    }
+    return taken;
+  };
+
+  const clusterPool = clusterDocs.map(d => d.id);
+  for (const day of clusterDays) {
+    const slots = perDay - plan[day].length;
+    if (slots <= 0) continue;
+    plan[day].push(...takeForDay(clusterPool, day, slots));
+  }
+
+  const remainingIds = remainingSorted.map(d => d.id).filter(id => !usedDoctors.has(id));
+  for (const day of workdays) {
+    const slots = perDay - plan[day].length;
+    if (slots <= 0) continue;
+    plan[day].push(...takeForDay(remainingIds, day, slots));
+  }
+  
+  const scheduled = new Set(Object.values(plan).flat());
+  const backlog = doctors.filter(d => !scheduled.has(d.id)).map(d => d.id);
+
+  return { plan, backlog, meta: { year, monthIndex, perDay } };
+}
+
+/* ─── Directive Modal (Gestion des règles) ─── */
+function DirectiveModal({ directive, onSave, onClose, doctors }) {
+  const [form, setForm] = useState(directive || {
+    id: `dir_${Date.now()}`,
+    name: "",
+    week: 1,
+    days: [3, 4], 
+    cities: [],
+    specialties: [],
+    isActive: true
+  });
+
+  const allCities = useMemo(() => [...new Set(doctors.map(d => d.city))].sort(), [doctors]);
+  const allSpecialties = useMemo(() => [...new Set(doctors.map(d => d.specialite).filter(Boolean))].sort(), [doctors]);
+
+  const toggleDay = (day) => {
+    setForm(prev => ({
+      ...prev,
+      days: prev.days.includes(day) ? prev.days.filter(d => d !== day) : [...prev.days, day].sort()
+    }));
+  };
+
+  const toggleArray = (field, value) => {
+    setForm(prev => ({
+      ...prev,
+      [field]: prev[field].includes(value) ? prev[field].filter(v => v !== value) : [...prev[field], value]
+    }));
+  };
+
+  return (
+    <div className="vp-overlay" onMouseDown={onClose}>
+      <div className="vp-modal" style={{ maxWidth: 600 }} onMouseDown={e => e.stopPropagation()}>
+        <div className="vp-header">
+          <div className="vp-name">{directive ? "Modifier la Règle" : "Nouvelle Règle"}</div>
+        </div>
+        
+        <div className="vp-body">
+          <div className="fg">
+            <label className="fl">Nom de la règle</label>
+            <input className="fi" value={form.name} onChange={e => setForm(p => ({...p, name: e.target.value}))} placeholder="Ex: Tournée Oncologie"/>
+          </div>
+
+          <div className="grid2">
+            <div className="fg">
+              <label className="fl">Semaine</label>
+              <select className="fs" value={form.week} onChange={e => setForm(p => ({...p, week: parseInt(e.target.value)}))}>
+                {[1,2,3,4,5].map(w => <option key={w} value={w}>Semaine {w}</option>)}
+              </select>
+            </div>
+            <div className="fg">
+              <label className="fl">Jours</label>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {["Lun", "Mar", "Mer", "Jeu", "Ven"].map((d, i) => (
+                  <button key={i} className={`btn ${form.days.includes(i+1) ? "btn-p" : "btn-g"}`} style={{ padding: "4px 8px", fontSize: 10 }} onClick={() => toggleDay(i + 1)}>{d}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="fg">
+            <label className="fl">Villes</label>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxHeight: 80, overflowY: 'auto' }}>
+              {allCities.map(c => (
+                <button key={c} className={`btn ${form.cities.includes(c) ? "btn-p" : "btn-g"}`} style={{ padding: "2px 6px", fontSize: 9 }} onClick={() => toggleArray("cities", c)}>{c}</button>
+              ))}
+            </div>
+          </div>
+
+          <div className="fg">
+            <label className="fl">Spécialités</label>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxHeight: 80, overflowY: 'auto' }}>
+              {allSpecialties.map(s => (
+                <button key={s} className={`btn ${form.specialties.includes(s) ? "btn-blue" : "btn-g"}`} style={{ padding: "2px 6px", fontSize: 9 }} onClick={() => toggleArray("specialties", s)}>{s}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="vp-footer">
+          <button className="btn btn-g" onClick={onClose}>Annuler</button>
+          <button className="btn btn-p" onClick={() => onSave(form)}>💾 Sauvegarder</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─────────────────────────────────────────────────────────────
   Planning Page
 ───────────────────────────────────────────────────────────── */
-function pickEvenly(days, target) { if (target <= 0) return []; if (target >= days.length) return [...days]; const step = days.length / target, chosen = []; for (let i = 0; i < target; i++) { const idx = Math.floor(i * step); chosen.push(days[idx]); } return Array.from(new Set(chosen)).slice(0, target); }
-function generatePlanning({ doctors, year, monthIndex, perDay, clusterDaysTarget }) {
-  const workdays = listWorkdays(year, monthIndex); const plan = {}; workdays.forEach(d => { plan[d] = []; });
-  const allSorted = stableSortDocs(doctors); const clusterDocs = allSorted.filter(d => CLUSTER.includes(d.city)); const wedThu = workdays.filter(d => isWedThu(d)); const target = clamp(clusterDaysTarget, 0, wedThu.length); const clusterDays = pickEvenly(wedThu, target);
-  const idToDoc = new Map(); doctors.forEach(d => idToDoc.set(d.id, d)); const inCluster = id => CLUSTER.includes(idToDoc.get(id)?.city); const canPlaceOnDay = (id, day) => (!inCluster(id) || isWedThu(day)); const takeForDay = (poolIds, day, k) => { const taken = []; for (let i = 0; i < poolIds.length && taken.length < k;) { const id = poolIds[i]; if (canPlaceOnDay(id, day)) { taken.push(id); poolIds.splice(i, 1); } else i++; } return taken; };
-  const clusterPool = clusterDocs.map(d => d.id); for (const day of clusterDays) { const slots = perDay - plan[day].length; if (slots <= 0) continue; plan[day].push(...takeForDay(clusterPool, day, slots)); }
-  const used = new Set(Object.values(plan).flat()); const remainingUnique = allSorted.map(d => d.id).filter(id => !used.has(id)); for (const day of workdays) { const slots = perDay - plan[day].length; if (slots <= 0) continue; plan[day].push(...takeForDay(remainingUnique, day, slots)); }
-  const visitedOnce = new Set(Object.values(plan).flat()); const allVisitedOnce = visitedOnce.size >= doctors.length;
-  if (allVisitedOnce) { const repeatPool = allSorted.map(d => d.id); for (const day of workdays) { while (plan[day].length < perDay) { const idx = repeatPool.findIndex(id => canPlaceOnDay(id, day)); if (idx === -1) break; const id = repeatPool.splice(idx, 1)[0]; plan[day].push(id); repeatPool.push(id); } } }
-  const scheduledOnce = new Set(Object.values(plan).flat()); const backlog = doctors.filter(d => !scheduledOnce.has(d.id)).map(d => d.id);
-  return { plan, backlog, meta: { year, monthIndex, perDay, clusterDaysTarget, clusterDays } };
-}
-function exportPlanningToICS(plan, docById, monthName) {
-  let icsContent = `BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//MedRep AI//FR\nCALSCALE:GREGORIAN\n`;
-  
-  Object.entries(plan).forEach(([date, ids]) => {
-    if (!ids.length) return;
-    const d = new Date(date);
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    const dateStr = `${year}${month}${day}`;
-    
-    ids.forEach((id, idx) => {
-      const doc = docById.get(id);
-      if (!doc) return;
-      const startTime = `T0${8 + idx}:0000`; // Commence à 8h, 9h, etc.
-      const endTime = `T0${9 + idx}:0000`;
-      
-      icsContent += `BEGIN:VEVENT
-DTSTART;VALUE=DATE:${dateStr}
-DTEND;VALUE=DATE:${dateStr}
-SUMMARY:Visite: ${doc.name}
-DESCRIPTION:Ville: ${doc.city} | Potentiel: ${doc.potential} | Score: ${doc.adoptionScore || 'N/A'}
-LOCATION:${doc.city}
-END:VEVENT\n`;
-    });
-  });
-  
-  icsContent += `END:VCALENDAR`;
-  
-  const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `planning_${monthName}.ics`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
 function PlanningPage({ doctors, setDoctors, apiKey, provider, model }) {
-  const [year, setYear] = useState(2026); const [monthIndex, setMonthIndex] = useState(2); const [perDay, setPerDay] = useState(6); const [clusterDaysTarget, setClusterDaysTarget] = useState(6);
+  const [year, setYear] = useState(2026);
+  const [monthIndex, setMonthIndex] = useState(2);
+  const [perDay, setPerDay] = useState(6);
+  
+  const [directives, setDirectives] = useState(() => loadJSON("medrep_directives", []));
+  const [showDirectiveModal, setShowDirectiveModal] = useState(false);
+  const [editingDirective, setEditingDirective] = useState(null);
+
   const storageKey = useMemo(() => `medrep_planning_${monthKey(year, monthIndex)}`, [year, monthIndex]);
   const workdays = useMemo(() => listWorkdays(year, monthIndex), [year, monthIndex]);
   const docById = useMemo(() => { const m = new Map(); doctors.forEach(d => m.set(d.id, d)); return m; }, [doctors]);
-  const [planState, setPlanState] = useState(() => { const saved = loadJSON(storageKey, null); if (saved?.plan) return saved; return generatePlanning({ doctors, year, monthIndex, perDay, clusterDaysTarget }); });
-  useEffect(() => { const saved = loadJSON(storageKey, null); if (saved?.plan) setPlanState(saved); else setPlanState(generatePlanning({ doctors, year, monthIndex, perDay, clusterDaysTarget })); }, [storageKey]);
-  useEffect(() => saveJSON(storageKey, planState), [storageKey, planState]);
-  const regenerate = () => setPlanState(generatePlanning({ doctors, year, monthIndex, perDay, clusterDaysTarget }));
-  const clearMonth = () => { const blank = {}; workdays.forEach(d => (blank[d] = [])); setPlanState({ plan: blank, backlog: doctors.map(d => d.id), meta: { year, monthIndex, perDay, clusterDaysTarget, clusterDays: [] } }); };
+  
+  const [planState, setPlanState] = useState(() => {
+    const saved = loadJSON(storageKey, null);
+    if (saved?.plan) return saved;
+    return generatePlanning({ doctors, year, monthIndex, perDay, directives });
+  });
+
+  useEffect(() => saveJSON("medrep_directives", directives), [directives]);
+  useEffect(() => { regenerate(); }, [directives, year, monthIndex, perDay, doctors]);
+
+  const regenerate = () => setPlanState(generatePlanning({ doctors, year, monthIndex, perDay, directives }));
+  const clearMonth = () => { const blank = {}; workdays.forEach(d => (blank[d] = [])); setPlanState({ plan: blank, backlog: doctors.map(d => d.id), meta: { year, monthIndex, perDay } }); };
+
+  const saveDirective = (dir) => {
+    setDirectives(prev => {
+      const exists = prev.find(d => d.id === dir.id);
+      if (exists) return prev.map(d => d.id === dir.id ? dir : d);
+      return [...prev, dir];
+    });
+    setShowDirectiveModal(false); setEditingDirective(null);
+  };
+
+  const deleteDirective = (id) => { if(!confirm("Supprimer ?")) return; setDirectives(prev => prev.filter(d => d.id !== id)); };
+
   const scheduledOnceSet = useMemo(() => new Set(Object.values(planState.plan || {}).flat()), [planState.plan]);
   const allVisitedOnce = doctors.length > 0 && scheduledOnceSet.size >= doctors.length;
   const [dragId, setDragId] = useState(null); const [dropDay, setDropDay] = useState(null); const [dropBacklog, setDropBacklog] = useState(false); const isDraggingRef = useRef(false);
-  
   const [visitPrepId, setVisitPrepId] = useState(null); const [vpAnalyzing, setVpAnalyzing] = useState(false); const [vpAiErr, setVpAiErr] = useState("");
   const [reports] = useState(() => loadJSON("medrep_reports_v1", {})); const [actions, setActions] = useState(() => loadJSON("medrep_actions_v1", {}));
   useEffect(() => { try { localStorage.setItem("medrep_actions_v1", JSON.stringify(actions)); } catch { } }, [actions]);
-  
   const visitPrepDoctor = visitPrepId ? docById.get(visitPrepId) : null;
   const openVisitPrep = id => { setVpAiErr(""); setVisitPrepId(id); };
   
   const analyzeForVisit = async () => {
-    if (!apiKey || !visitPrepDoctor) return;
-    const docReports = (reports[visitPrepId] || []).slice(0, 5);
-    if (!docReports.length) { setVpAiErr("Ajoute au moins un CR."); return; }
-    const existingMemory = loadJSON(`medrep_memory_${visitPrepId}`, {});
-    setVpAnalyzing(true); setVpAiErr("");
-    try {
-      const prompt = `Analyse le Dr. ${visitPrepDoctor.name} (${visitPrepDoctor.city}, Pot. ${visitPrepDoctor.potential}, Score ${visitPrepDoctor.adoptionScore ?? 'N/A'}/100, Frein: ${visitPrepDoctor.mainObjection || '—'}).\n\nCR:\n${docReports.map((r, i) => `[${i + 1}] ${r.createdAt}\nTexte: ${r.text || '—'}\nDictée: ${r.transcript || '—'}`).join("\n\n")}\n\n## Score d'adoption\n- Score : X/100\n- Stade : ...\n- Probabilité de prescription : faible/moyenne/élevée\n\n## Freins / objections\n- Frein principal : ...\n\n## Prochaines actions concrètes\n\n## Objectif next visit`;
-      const out = await callLLM(prompt, apiKey, provider, model);
-      const insights = extractAdoptionInsights(out);
-      const newMemory = extractAIMemory(out, existingMemory);
-      setActions(prev => ({ ...prev, [visitPrepId]: { generatedAt: dtNowISO(), text: out, prescriptionProba: insights.prescriptionProba } }));
-      saveJSON(`medrep_memory_${visitPrepId}`, newMemory);
-      if (setDoctors) setDoctors(prev => stableSortDocs(prev.map(doc => doc.id === visitPrepId ? { ...doc, adoptionScore: insights.adoptionScore ?? doc.adoptionScore, mainObjection: insights.mainObjection || doc.mainObjection || "", nextVisitGoal: insights.nextVisitGoal || doc.nextVisitGoal || "", priorityLevel: insights.priorityLevel || doc.priorityLevel || "" } : doc)));
-    } catch (e) { setVpAiErr(e.message); }
-    setVpAnalyzing(false);
+    if (!apiKey || !visitPrepDoctor) return; const docReports = (reports[visitPrepId] || []).slice(0, 5);
+    if (!docReports.length) { setVpAiErr("Ajoute un CR."); return; }
+    const existingMemory = loadJSON(`medrep_memory_${visitPrepId}`, {}); setVpAnalyzing(true); setVpAiErr("");
+    try { const prompt = `Analyse ${visitPrepDoctor.name}.\nCR:\n${docReports.map((r, i) => `[${i+1}] ${r.text||'—'}`).join("\n")}\n## Score\n- Score : X/100`; const out = await callLLM(prompt, apiKey, provider, model); const insights = extractAdoptionInsights(out); const newMemory = extractAIMemory(out, existingMemory); setActions(prev => ({ ...prev, [visitPrepId]: { generatedAt: dtNowISO(), text: out } })); saveJSON(`medrep_memory_${visitPrepId}`, newMemory); if (setDoctors) setDoctors(prev => stableSortDocs(prev.map(doc => doc.id === visitPrepId ? { ...doc, adoptionScore: insights.adoptionScore ?? doc.adoptionScore } : doc))); } catch (e) { setVpAiErr(e.message); } setVpAnalyzing(false);
   };
 
   const isDocInPlan = (id, plan) => { for (const k of Object.keys(plan)) if ((plan[k] || []).includes(id)) return true; return false; };
-  const onDropToDay = day => { if (!dragId) return; isDraggingRef.current = false; setPlanState(prev => { const plan = { ...prev.plan }; const doc = docById.get(dragId); if (doc && CLUSTER.includes(doc.city) && !isWedThu(day)) { alert("Cluster : uniquement Mer/Jeu ✅"); return prev; } const alreadyIn = isDocInPlan(dragId, plan); if (alreadyIn && !allVisitedOnce) { alert("Pas de 2ème visite avant que tous soient planifiés ✅"); return prev; } Object.keys(plan).forEach(k => { plan[k] = (plan[k] || []).filter(id => id !== dragId); }); const backlog = (prev.backlog || []).filter(id => id !== dragId); plan[day] = [...(plan[day] || []), dragId]; return { ...prev, plan, backlog }; }); setDragId(null); setDropDay(null); setDropBacklog(false); };
+  const onDropToDay = day => { if (!dragId) return; isDraggingRef.current = false; setPlanState(prev => { const plan = { ...prev.plan }; const doc = docById.get(dragId); if (doc && CLUSTER.includes(doc.city) && !isWedThu(day)) { alert("Cluster Mer/Jeu"); return prev; } const alreadyIn = isDocInPlan(dragId, plan); if (alreadyIn && !allVisitedOnce) { alert("1 visite max"); return prev; } Object.keys(plan).forEach(k => { plan[k] = (plan[k] || []).filter(id => id !== dragId); }); const backlog = (prev.backlog || []).filter(id => id !== dragId); plan[day] = [...(plan[day] || []), dragId]; return { ...prev, plan, backlog }; }); setDragId(null); setDropDay(null); setDropBacklog(false); };
   const onDropToBacklog = () => { if (!dragId) return; isDraggingRef.current = false; setPlanState(prev => { const plan = { ...prev.plan }; Object.keys(plan).forEach(k => { plan[k] = (plan[k] || []).filter(id => id !== dragId); }); const backlog = [dragId, ...(prev.backlog || []).filter(id => id !== dragId)]; return { ...prev, plan, backlog }; }); setDragId(null); setDropDay(null); setDropBacklog(false); };
   const removeFromDay = (day, id) => { setPlanState(prev => { const plan = { ...prev.plan, [day]: (prev.plan[day] || []).filter(x => x !== id) }; const backlog = [id, ...(prev.backlog || []).filter(x => x !== id)]; return { ...prev, plan, backlog }; }); };
-  
+
   const totalScheduled = Object.values(planState.plan || {}).flat().length;
   const activeDays = Object.entries(planState.plan || {}).filter(([, arr]) => (arr || []).length > 0).length;
   const weeks = useMemo(() => groupWorkdaysByWeek(workdays), [workdays]);
@@ -1536,82 +1688,18 @@ function PlanningPage({ doctors, setDoctors, apiKey, provider, model }) {
 
   return (
     <div className="content">
-      <div className="vp-tab-row" style={{ marginBottom: 14 }}>
-        <button className={`vp-tab${planTab === "planning" ? " active" : ""}`} onClick={() => setPlanTab("planning")}>📅 Planning mensuel</button>
-        <button className={`vp-tab${planTab === "route" ? " active" : ""}`} onClick={() => setPlanTab("route")}>🗺️ Optimisation tournée</button>
-      </div>
-      {planTab === "route" && <div className="card" style={{ marginBottom: 14 }}><div className="card-t">🗺️ Tournée optimisée par ville</div><RouteOptimizerPanel doctors={doctors} planState={planState} docById={docById} /></div>}
-      {planTab === "planning" && (
-        <>
-          <div className="pl-toolbar">
-            <div style={{ minWidth: 170 }}><label className="fl">Mois</label><select className="fs" value={monthIndex} onChange={e => setMonthIndex(parseInt(e.target.value, 10))}>{MFR.map((m, i) => <option key={m} value={i}>{m}</option>)}</select></div>
-            <div style={{ minWidth: 120 }}><label className="fl">Année</label><input className="fi" type="number" value={year} onChange={e => setYear(parseInt(e.target.value || "2026", 10))} /></div>
-            <div style={{ minWidth: 150 }}><label className="fl">Visites / jour</label><input className="fi" type="number" min={3} max={12} value={perDay} onChange={e => setPerDay(parseInt(e.target.value || "6", 10))} /></div>
-            <div style={{ minWidth: 210 }}><label className="fl">Jours cluster</label><input className="fi" type="number" min={0} max={workdays.filter(isWedThu).length} value={clusterDaysTarget} onChange={e => setClusterDaysTarget(parseInt(e.target.value || "6", 10))} /></div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button className="btn btn-p" onClick={regenerate}>⚡ Générer</button>
-              <button className="btn btn-blue" onClick={() => exportPlanningToICS(planState.plan, docById, MFR[monthIndex])}>📅 Export Calendrier (.ics)</button>
-              <button className="btn btn-g" onClick={clearMonth}>🧹 Vider</button>
-            </div>            <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <span className="pill">📅 {activeDays} jours</span>
-              <span className="pill" style={{ borderColor: "rgba(0,212,170,.35)" }}>✅ {totalScheduled} planifiées</span>
-              <span className="pill" style={{ borderColor: allVisitedOnce ? "rgba(0,212,170,.35)" : "rgba(245,158,11,.35)", color: allVisitedOnce ? "var(--teal)" : "var(--amber)" }}>{allVisitedOnce ? "Repeats OK" : "1 fois d'abord"}</span>
-            </div>
-          </div>
-          <div className="ok" style={{ marginBottom: 12 }}>✅ Planning persistant. 📍 Cluster Mer/Jeu. <b>Clic sur 📋</b> pour préparer la visite.</div>
-          <div className="card" style={{ marginBottom: 12 }}>
-            <div className="card-t">Backlog (non planifiés) <span className="pill">{realBacklog.length}</span></div>
-            <div onDragOver={e => { e.preventDefault(); setDropBacklog(true); }} onDragLeave={() => setDropBacklog(false)} onDrop={e => { e.preventDefault(); onDropToBacklog(); }} className={dropBacklog ? "drop-hint" : ""} style={{ padding: 10, borderRadius: 12, minHeight: 70 }}>
-              {realBacklog.length === 0 && <div className="empty" style={{ padding: 18 }}>Tout est planifié ✅</div>}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(200px,1fr))", gap: 10 }}>
-                {realBacklog.slice(0, 40).map(id => { const d = docById.get(id); if (!d) return null; return (
-                  <div key={id} className={`chip chip-clickable ${dragId === id ? "dragging" : ""}`} draggable onDragStart={() => { isDraggingRef.current = true; setDragId(id); }} onDragEnd={() => { isDraggingRef.current = false; setDragId(null); setDropBacklog(false); setDropDay(null); }}>
-                    <div className="chip-l" onClick={() => { if (!isDraggingRef.current) openVisitPrep(id); }}><div className="chip-n">{d.name}</div><div className="chip-s">{d.city}</div></div>
-                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}><span className={`tag t${d.potential || "C"}`}>{d.potential || "C"}</span><button className="chip-eye" onClick={e => { e.stopPropagation(); openVisitPrep(id); }}>📋</button></div>
-                  </div>
-                ); })}
-              </div>
-            </div>
-          </div>
-          {weeks.map((weekDays, wi) => { const weekVisits = weekDays.reduce((acc, day) => acc + ((planState.plan?.[day] || []).length), 0), weekTarget = weekDays.length * perDay; return (
-            <div key={`week_${wi}`} className="week-block">
-              <div className="week-head"><div><div className="week-title">Semaine {wi + 1}</div><div className="week-sub">{weekDays.length} jours · {weekVisits}/{weekTarget} visites</div></div></div>
-              <div className="pl-grid-week">
-                {weekDays.map(day => { const dt = new Date(day), list = planState.plan?.[day] || [], isClDay = isWedThu(day); return (
-                  <div key={day} className={`pl-day ${isClDay ? "cl" : ""} ${list.length === 0 ? "emptyday" : list.length >= perDay ? "full" : "partial"}`} onDragOver={e => { e.preventDefault(); setDropDay(day); }} onDrop={e => { e.preventDefault(); onDropToDay(day); }}>
-                    <div className="pl-dh"><div><div className="pl-dn">{DFR[dt.getDay()]} {dt.getDate()} {MFR[dt.getMonth()]}</div></div><span className="pill">{list.length}/{perDay}</span></div>
-                    <div className="pl-vs">
-                      {list.map(id => { const d = docById.get(id); if (!d) return null; return (
-                        <div key={id} className="chip" draggable onDragStart={() => { isDraggingRef.current = true; setDragId(id); }}>
-                          <div className="chip-l" onClick={() => openVisitPrep(id)} style={{ cursor: "pointer" }}><div className="chip-n">{d.name}</div><div className="chip-s">{d.city}</div></div>
-                          <div style={{ display: "flex", gap: 4 }}><button className="chip-eye" onClick={() => openVisitPrep(id)}>📋</button><button className="btn btn-g" style={{ padding: "2px 6px", fontSize: 10 }} onClick={() => removeFromDay(day, id)}>✕</button></div>
-                        </div>
-                      ); })}
-                    </div>
-                  </div>
-                ); })}
-              </div>
-            </div>
-          ); })}
-        </>
-      )}
-      
-      {/* MODAL */}
-      {visitPrepDoctor && (
-        <VisitPrepModal
-          doctor={visitPrepDoctor}
-          reports={reports}
-          aiAction={actions[visitPrepId]}
-          apiKey={apiKey}
-          provider={provider}
-          model={model}
-          onClose={() => { setVisitPrepId(null); setVpAiErr(""); }}
-          onAnalyze={analyzeForVisit}
-          analyzing={vpAnalyzing}
-          aiErr={vpAiErr}
-          setDoctors={setDoctors}
-        />
-      )}
+      <div className="vp-tab-row" style={{ marginBottom: 14 }}> <button className={`vp-tab${planTab === "planning" ? " active" : ""}`} onClick={() => setPlanTab("planning")}>📅 Planning</button> <button className={`vp-tab${planTab === "route" ? " active" : ""}`} onClick={() => setPlanTab("route")}>🗺️ Tournée</button> </div>
+      {planTab === "route" && <div className="card" style={{ marginBottom: 14 }}><div className="card-t">🗺️ Tournée</div><RouteOptimizerPanel doctors={doctors} planState={planState} docById={docById} /></div>}
+      {planTab === "planning" && ( <>
+        <div className="pl-toolbar"> <div style={{ minWidth: 150 }}><label className="fl">Mois</label><select className="fs" value={monthIndex} onChange={e => setMonthIndex(parseInt(e.target.value, 10))}>{MFR.map((m, i) => <option key={m} value={i}>{m}</option>)}</select></div> <div style={{ minWidth: 100 }}><label className="fl">Année</label><input className="fi" type="number" value={year} onChange={e => setYear(parseInt(e.target.value || "2026", 10))} /></div> <div style={{ minWidth: 120 }}><label className="fl">Visites / jour</label><input className="fi" type="number" min={3} max={12} value={perDay} onChange={e => setPerDay(parseInt(e.target.value || "6", 10))} /></div> <div style={{ display: "flex", gap: 8 }}> <button className="btn btn-blue" onClick={() => { setEditingDirective(null); setShowDirectiveModal(true); }}>📋 Règles</button> <button className="btn btn-p" onClick={regenerate}>⚡ Générer</button> <button className="btn btn-g" onClick={clearMonth}>🧹 Vider</button> </div> <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}> <span className="pill">📅 {activeDays} jours</span> <span className="pill" style={{ borderColor: "rgba(0,212,170,.35)" }}>✅ {totalScheduled} planifiées</span> </div> </div>
+        {directives.length > 0 && <div className="card" style={{ marginBottom: 10, padding: "8px 12px", display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}> <span style={{ fontSize: 11, fontWeight: 700 }}>Règles actives:</span> {directives.filter(d => d.isActive).map(d => <span key={d.id} className="pill" style={{ borderColor: "var(--violet)", color: "var(--violet)", cursor: 'pointer' }} onClick={() => { setEditingDirective(d); setShowDirectiveModal(true); }}> {d.name} (S{d.week}) <span style={{ marginLeft: 4, opacity: 0.6 }} onClick={(e) => { e.stopPropagation(); deleteDirective(d.id); }}>✕</span> </span> )} </div> }
+        <div className="ok" style={{ marginBottom: 12 }}>✅ Planning persistant. <b>Clic sur 📋</b> pour préparer.</div>
+        <div className="card" style={{ marginBottom: 12 }}> <div className="card-t">Backlog <span className="pill">{realBacklog.length}</span></div> <div onDragOver={e => { e.preventDefault(); setDropBacklog(true); }} onDragLeave={() => setDropBacklog(false)} onDrop={e => { e.preventDefault(); onDropToBacklog(); }} className={dropBacklog ? "drop-hint" : ""} style={{ padding: 10, borderRadius: 12, minHeight: 70 }}> {realBacklog.length === 0 && <div className="empty" style={{ padding: 18 }}>Tout est planifié ✅</div>} <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(200px,1fr))", gap: 10 }}> {realBacklog.slice(0, 40).map(id => { const d = docById.get(id); if (!d) return null; return ( <div key={id} className={`chip chip-clickable ${dragId === id ? "dragging" : ""}`} draggable onDragStart={() => { isDraggingRef.current = true; setDragId(id); }} onDragEnd={() => { isDraggingRef.current = false; setDragId(null); setDropBacklog(false); }}> <div className="chip-l" onClick={() => openVisitPrep(id)}><div className="chip-n">{d.name}</div><div className="chip-s">{d.city}</div></div> <div style={{ display: "flex", gap: 4, alignItems: "center" }}><span className={`tag t${d.potential || "C"}`}>{d.potential || "C"}</span><button className="chip-eye" onClick={e => { e.stopPropagation(); openVisitPrep(id); }}>📋</button></div> </div> ); })} </div> </div> </div>
+        {weeks.map((weekDays, wi) => { const weekVisits = weekDays.reduce((acc, day) => acc + ((planState.plan?.[day] || []).length), 0); const weekTarget = weekDays.length * perDay; return ( <div key={`week_${wi}`} className="week-block"> <div className="week-head"><div><div className="week-title">Semaine {wi + 1}</div><div className="week-sub">{weekDays.length}j · {weekVisits}/{weekTarget}</div></div></div> <div className="pl-grid-week"> {weekDays.map(day => { const dt = new Date(day), list = planState.plan?.[day] || [], isClDay = isWedThu(day); const isDirectiveDay = directives.some(dir => dir.week === (wi+1) && dir.days.includes(dt.getDay())); return ( <div key={day} className={`pl-day ${isClDay ? "cl" : ""} ${isDirectiveDay ? "full" : ""}`} onDragOver={e => { e.preventDefault(); setDropDay(day); }} onDrop={e => { e.preventDefault(); onDropToDay(day); }}> <div className="pl-dh"><div><div className="pl-dn">{DFR[dt.getDay()]} {dt.getDate()}</div>{isDirectiveDay && <div className="mini" style={{color:"var(--violet)"}}>📋 Directive</div>}</div><span className="pill">{list.length}/{perDay}</span></div> <div className="pl-vs"> {list.map(id => { const d = docById.get(id); if (!d) return null; return ( <div key={id} className="chip" draggable onDragStart={() => { isDraggingRef.current = true; setDragId(id); }}> <div className="chip-l" onClick={() => openVisitPrep(id)} style={{ cursor: "pointer" }}><div className="chip-n">{d.name}</div><div className="chip-s">{d.city}</div></div> <div style={{ display: "flex", gap: 4 }}><button className="chip-eye" onClick={() => openVisitPrep(id)}>📋</button><button className="btn btn-g" style={{ padding: "2px 6px", fontSize: 10 }} onClick={() => removeFromDay(day, id)}>✕</button></div> </div> ); })} </div> </div> ); })} </div> </div> ); })}
+      </> )}
+    
+      {showDirectiveModal && <DirectiveModal directive={editingDirective} onSave={saveDirective} onClose={() => { setShowDirectiveModal(false); setEditingDirective(null); }} doctors={doctors} />}
+      {visitPrepDoctor && <VisitPrepModal doctor={visitPrepDoctor} reports={reports} aiAction={actions[visitPrepId]} apiKey={apiKey} provider={provider} model={model} onClose={() => { setVisitPrepId(null); }} onAnalyze={analyzeForVisit} analyzing={vpAnalyzing} aiErr={vpAiErr} setDoctors={setDoctors} />}
     </div>
   );
 }
