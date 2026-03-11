@@ -1,4 +1,36 @@
 import { useEffect, useMemo, useRef, useState, useContext, createContext } from "react";
+// --- CONFIGURATION SUPABASE (CLOUD) ---
+import { createClient } from '@supabase/supabase-js';
+
+// REMPLACEZ PAR VOS CLÉS
+const SUPABASE_URL = 'https://ovrovuorcrzovhpvmmip.supabase.co'; 
+const SUPABASE_ANON_KEY = 'sb_publishable_P9oEZ1VGumaSo9GBMbRh3A_Jx6jWJ8O';
+
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// Fonction utilitaire pour charger depuis le Cloud (Nom différent pour éviter le conflit)
+async function loadCloudData(userId, key) {
+  try {
+    const { data, error } = await supabase
+      .from('app_data')
+      .select('value')
+      .eq('user_id', userId)
+      .eq('key', key)
+      .single();
+    if (error) return null;
+    return data?.value;
+  } catch (e) { return null; }
+}
+
+// Fonction utilitaire pour sauvegarder vers le Cloud
+async function saveCloudData(userId, key, value) {
+  try {
+    await supabase
+      .from('app_data')
+      .upsert({ user_id: userId, key, value, updated_at: new Date().toISOString() }, { onConflict: 'user_id,key' });
+  } catch (e) { console.error("Cloud save error", e); }
+}
+// --- FIN CONFIGURATION ---
 const CHAT_HISTORY_KEY = "medrep_assistant_history_v1";
 
 /* ─────────────────────────────────────────────────────────────
@@ -2162,40 +2194,130 @@ function ToastProvider({ children }) {
   );
 }
 const useToast = () => useContext(ToastContext);
+/* --- Auth Component --- */
+function Auth() {
+  const [loading, setLoading] = useState(false);
+  const [email, setEmail] = useState('');
 
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    try {
+      setLoading(true);
+      const { error } = await supabase.auth.signInWithOtp({ email });
+      if (error) throw error;
+      alert('✉️ Lien magique envoyé ! Vérifiez votre boîte mail.');
+    } catch (error) {
+      alert(error.error_description || error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="content" style={{display:'flex', justifyContent:'center', alignItems:'center', minHeight:'80vh'}}>
+      <div className="card" style={{maxWidth: 400, width: '100%'}}>
+        <div className="vp-name" style={{textAlign:'center', marginBottom:20}}>🔐 Connexion Requise</div>
+        <div className="mini" style={{textAlign:'center', marginBottom:20}}>
+          Connectez-vous pour synchroniser vos données sur tous vos appareils.
+        </div>
+        <form onSubmit={handleLogin}>
+          <div className="fg">
+            <label className="fl">Email</label>
+            <input 
+              className="fi" 
+              type="email" 
+              placeholder="votre@email.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+          <button className="btn btn-p" style={{width:'100%'}} disabled={loading}>
+            {loading ? <span className="sp"/> : '📧 Envoyer le lien magique'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
 /* ─────────────────────────────────────────────────────────────
   APP
 ───────────────────────────────────────────────────────────── */
 export default function App(){
-  // --- States de base ---
+  // --- Session Management ---
+  const [session, setSession] = useState(null);
+  const [loadingSession, setLoadingSession] = useState(true);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setLoadingSession(false);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // --- States ---
   const enrich=d=>({...d,adoptionScore:d?.adoptionScore??null,mainObjection:d?.mainObjection??"",nextVisitGoal:d?.nextVisitGoal??"",priorityLevel:d?.priorityLevel??""});
   
-  const[doctors,setDoctors]=useState(()=>{
-    const saved=loadJSON("medrep_doctors_v1",null);
-    if(Array.isArray(saved)&&saved.length) return stableSortDocs(saved.map(enrich));
-    return stableSortDocs(DOCS_FALLBACK.map(enrich));
-  });
-  
+  // On garde les initialiseurs synchrones pour le rendu initial rapide
+  const[doctors,setDoctors]=useState(()=>{const saved=loadJSON("medrep_doctors_v1",null);if(Array.isArray(saved)&&saved.length)return stableSortDocs(saved.map(enrich));return stableSortDocs(DOCS_FALLBACK.map(enrich));});
   const[apiKey,setApiKey]=useState(()=>localStorage.getItem("medrep_apiKey")||"");
   const[provider,setProvider]=useState(()=>detectProvider(localStorage.getItem("medrep_apiKey")||""));
   const[model,setModel]=useState(()=>localStorage.getItem("medrep_model")||"");
   
-  // --- GESTION MULTI-PRODUITS ---
   const [products, setProducts] = useState(() => loadJSON("medrep_products", ["Fumetil"]));
   const [activeProduct, setActiveProduct] = useState(() => loadJSON("medrep_active_product", "Fumetil"));
-
-  // --- NOUVEAU : Etat Menu Mobile ---
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // --- Sauvegardes automatiques ---
+  // --- SYNC: Load from Cloud on Session Change ---
+  useEffect(() => {
+    if (!session?.user) return;
+    
+    async function syncFromCloud() {
+      const userId = session.user.id;
+      
+      // Load doctors
+      const cloudDoctors = await loadCloudData(userId, 'medrep_doctors_v1');
+      if (cloudDoctors && Array.isArray(cloudDoctors)) setDoctors(stableSortDocs(cloudDoctors.map(enrich)));
+      
+      // Load products
+      const cloudProducts = await loadCloudData(userId, 'medrep_products');
+      if (cloudProducts) setProducts(cloudProducts);
+      
+      // Load Active Product
+      const cloudActive = await loadCloudData(userId, 'medrep_active_product');
+      if (cloudActive) setActiveProduct(cloudActive);
+    }
+    syncFromCloud();
+  }, [session]);
+
+  // --- SYNC: Save to LocalStorage (Instant) ---
   useEffect(()=>saveJSON("medrep_doctors_v1",doctors),[doctors]);
   useEffect(()=>{try{localStorage.setItem("medrep_apiKey",apiKey||"");}catch{}},[apiKey]);
   useEffect(()=>{try{localStorage.setItem("medrep_model",model||"");}catch{}},[model]);
-  useEffect(()=>{setProvider(detectProvider(apiKey));},[apiKey]);
   useEffect(() => saveJSON("medrep_products", products), [products]);
   useEffect(() => saveJSON("medrep_active_product", activeProduct), [activeProduct]);
 
-  // --- Logique Produits ---
+  // --- SYNC: Save to Cloud (Debounced) ---
+  useEffect(() => {
+    if (!session?.user) return;
+    const timer = setTimeout(() => {
+      saveCloudData(session.user.id, 'medrep_doctors_v1', doctors);
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [doctors, session]);
+
+  useEffect(() => {
+    if (!session?.user) return;
+    saveCloudData(session.user.id, 'medrep_products', products);
+    saveCloudData(session.user.id, 'medrep_active_product', activeProduct);
+  }, [products, activeProduct, session]);
+
+  // --- Logic ---
+  useEffect(()=>{setProvider(detectProvider(apiKey));},[apiKey]);
+
   const addProduct = (name) => {
     const cleanName = name.trim();
     if (!cleanName || products.includes(cleanName)) return;
@@ -2208,21 +2330,17 @@ export default function App(){
     if (!confirm(`Supprimer "${name}" ?`)) return;
     setProducts(prev => prev.filter(p => p !== name));
     setDoctors(prev => prev.filter(d => d.product !== name));
-    if (activeProduct === name) {
-      setActiveProduct(products.find(p => p !== name));
-    }
+    if (activeProduct === name) setActiveProduct(products.find(p => p !== name));
   };
 
-  // --- Filtrage ---
   const filteredDoctors = useMemo(() => {
     return doctors.filter(d => (d.product || "Fumetil") === activeProduct);
   }, [doctors, activeProduct]);
 
-  const hasApi = !!apiKey.trim();
-  const[page,setPage] = useState("dashboard");
+  const hasApi=!!apiKey.trim();
+  const[page,setPage]=useState("dashboard");
   
-  // --- Configuration Navigation ---
-  const NAV = [
+  const NAV=[
     {sec:"Principal",items:[
       {id:"dashboard",ic:"⊞",lbl:"Dashboard"},
       {id:"commercial",ic:"📈",lbl:"Commercial"},
@@ -2239,67 +2357,48 @@ export default function App(){
     ]}
   ];
   
-  const TITLES = {
-    dashboard:"Vue d'ensemble",
-    commercial:"Commercial",
-    fumetil:`Dashboard ${activeProduct}`,
-    assistant:`Coach IA`,
-    planning:"Planning",
-    reports:"Comptes-rendus",
-    doctors:"Médecins",
-    settings:"Paramètres"
+  const TITLES={
+    dashboard:"Vue d'ensemble", commercial:"Commercial", fumetil:`Dashboard ${activeProduct}`,
+    assistant:`Coach IA`, planning:"Planning", reports:"Comptes-rendus", doctors:"Médecins", settings:"Paramètres"
   };
   
-  // --- Render Function ---
-  const render = () => {
-    const m = model || provider?.defaultModel;
+  const render=()=>{
+    const m=model||provider?.defaultModel;
     switch(page){
-      case"dashboard":
-        return <Dashboard doctors={filteredDoctors} setPage={setPage} hasApi={hasApi} provider={provider} activeProduct={activeProduct}/>;
-      case"commercial":
-        return <CommercialDashboard doctors={filteredDoctors} setPage={setPage} apiKey={apiKey} provider={provider} model={m} activeProduct={activeProduct}/>;
-      case"fumetil":
-        return <FumetilDashboard doctors={filteredDoctors} setPage={setPage} activeProduct={activeProduct}/>; 
-      case"assistant":
-        return <Assistant apiKey={apiKey} provider={provider} model={m} setPage={setPage} doctors={filteredDoctors}/>;
-      case"planning":
-        return <PlanningPage doctors={filteredDoctors} setDoctors={setDoctors} apiKey={apiKey} provider={provider} model={m}/>;
-      case"reports":
-        return <ReportsPage doctors={filteredDoctors} setDoctors={setDoctors} apiKey={apiKey} provider={provider} model={m} setPage={setPage}/>;
-      case"doctors":
-        return <DoctorsPage doctors={filteredDoctors} setDoctors={setDoctors} activeProduct={activeProduct} products={products}/>;
-      case"settings":
-        return <SettingsPage apiKey={apiKey} setApiKey={setApiKey} model={m} setModel={setModel} provider={provider} setProvider={setProvider} products={products} addProduct={addProduct} deleteProduct={deleteProduct} activeProduct={activeProduct} setActiveProduct={setActiveProduct}/>;
-      default:
-        return null;
+      case"dashboard":return <Dashboard doctors={filteredDoctors} setPage={setPage} hasApi={hasApi} provider={provider} activeProduct={activeProduct}/>;
+      case"commercial":return <CommercialDashboard doctors={filteredDoctors} setPage={setPage} apiKey={apiKey} provider={provider} model={m} activeProduct={activeProduct}/>;
+      case"fumetil":return <FumetilDashboard doctors={filteredDoctors} setPage={setPage} activeProduct={activeProduct}/>; 
+      case"assistant":return <Assistant apiKey={apiKey} provider={provider} model={m} setPage={setPage} doctors={filteredDoctors}/>;
+      case"planning":return <PlanningPage doctors={filteredDoctors} setDoctors={setDoctors} apiKey={apiKey} provider={provider} model={m}/>;
+      case"reports":return <ReportsPage doctors={filteredDoctors} setDoctors={setDoctors} apiKey={apiKey} provider={provider} model={m} setPage={setPage}/>;
+      case"doctors":return <DoctorsPage doctors={filteredDoctors} setDoctors={setDoctors} activeProduct={activeProduct} products={products}/>;
+      case"settings":return <SettingsPage apiKey={apiKey} setApiKey={setApiKey} model={m} setModel={setModel} provider={provider} setProvider={setProvider} products={products} addProduct={addProduct} deleteProduct={deleteProduct} activeProduct={activeProduct} setActiveProduct={setActiveProduct}/>;
+      default:return null;
     }
   };
   
-  // Fermer le menu mobile quand on change de page
-  useEffect(() => {
-    setMobileMenuOpen(false);
-  }, [page]);
+  useEffect(() => { setMobileMenuOpen(false); }, [page]);
 
-  // --- JSX ---
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setSession(null);
+  };
+
+  if (loadingSession) return <div className="content"><div className="card"><div className="empty">Chargement...</div></div></div>;
+  if (!session) return <Auth />;
+
   return(
     <ToastProvider>
       <GS/>
       <div className="root">
         <div className="bg"/>
-        
-        {/* SIDEBAR */}
         <aside className={`sb ${mobileMenuOpen ? "open" : ""}`}>
           <div className="sb-logo">
             <div className="logo-ic">🧠</div>
-            <div>
-              <div className="logo-t">MedRep AI</div>
-              <div className="logo-s">CRM</div>
-            </div>
-            {/* Bouton fermer (visible sur mobile quand menu ouvert) */}
+            <div><div className="logo-t">MedRep AI</div><div className="logo-s">Cloud</div></div>
             {mobileMenuOpen && <button className="btn btn-g" style={{marginLeft:"auto"}} onClick={()=>setMobileMenuOpen(false)}>✕</button>}
           </div> {/* CORRECTION : Fermeture de sb-logo */}
       
-          {/* Sélecteur Produit */}
           <div style={{padding:"10px 10px 0"}}>
             <label className="fl">Produit</label>
             <select className="fs" value={activeProduct} onChange={e => setActiveProduct(e.target.value)}>
@@ -2307,15 +2406,13 @@ export default function App(){
             </select>
           </div>
 
-          {/* Navigation */}
           <nav className="sb-nav">
             {NAV.map(s => (
               <div key={s.sec} className="nav-sec">
                 <div className="nav-lbl">{s.sec}</div>
                 {s.items.map(it => (
                   <div key={it.id} className={`nav-it${page===it.id?" on":""}`} onClick={()=>setPage(it.id)}>
-                    <span style={{fontSize:14,width:20,textAlign:"center"}}>{it.ic}</span>
-                    {it.lbl}
+                    <span style={{fontSize:14,width:20,textAlign:"center"}}>{it.ic}</span> {it.lbl}
                     {it.badge && <span className="nav-badge ok">{it.badge}</span>}
                     {it.needsApi && (hasApi ? <span className="nav-badge ok">ON</span> : <span className="nav-badge">OFF</span>)}
                   </div>
@@ -2323,18 +2420,18 @@ export default function App(){
               </div>
             ))}
           </nav>
-        </aside> {/* CORRECTION : Fermeture de aside APRÈS la navigation */}
+
+          <div style={{marginTop:'auto', padding:10, borderTop:'1px solid var(--bdr)'}}>
+             <div className="mini" style={{marginBottom:5, wordBreak:'break-all'}}>📧 {session.user.email}</div>
+             <button className="btn btn-rose" style={{width:'100%', fontSize:11}} onClick={handleLogout}>🚪 Déconnexion</button>
+          </div>
+        </aside>
         
-        {/* Backdrop Mobile */}
         {mobileMenuOpen && <div className="ov" style={{zIndex:90, background:'rgba(0,0,0,0.5)'}} onClick={()=>setMobileMenuOpen(false)}></div>}
 
-        {/* MAIN */}
         <main className="main">
           <div className="topbar">
-            {/* HAMBURGER 
-                Note: On retire style={{display:'none'}} car le CSS s'en charge (.hamburger { display: none; } par défaut) */}
-            <button className="hamburger" onClick={()=>setMobileMenuOpen(true)}>☰</button>
-            
+            <button className="hamburger" style={{display:'none'}} onClick={()=>setMobileMenuOpen(true)}>☰</button>
             <div className="tb-title">{TITLES[page]}</div>
             {!hasApi && <button className="btn btn-blue" style={{fontSize:11}} onClick={()=>setPage("settings")}>🔑 API</button>}
             {hasApi && <button className="btn btn-g" style={{fontSize:11}} onClick={()=>setPage("assistant")}>Coach</button>}
