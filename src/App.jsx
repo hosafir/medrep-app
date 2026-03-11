@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useRef, useState, useContext, createContext } from "react";
 // --- CONFIGURATION SUPABASE (CLOUD) ---
-import { createClient } from '@supabase/supabase-js';
 
 // REMPLACEZ PAR VOS CLÉS
-const SUPABASE_URL = 'https://ovrovuorcrzovhpvmmip.supabase.co'; 
-const SUPABASE_ANON_KEY = 'sb_publishable_P9oEZ1VGumaSo9GBMbRh3A_Jx6jWJ8O';
+// --- CONFIGURATION SUPABASE (Version VITE CORRECTE) ---
+import { createClient } from '@supabase/supabase-js';
+
+// Pour Vite, on utilise import.meta.env et le préfixe VITE_
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://ovrovuorcrzovhpvmmip.supabase.co';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_P9oEZ1VGumaSo9GBMbRh3A_Jx6jWJ8O';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// ... le reste du code (loadCloudData, etc.)
 // Fonction utilitaire pour charger depuis le Cloud (Nom différent pour éviter le conflit)
 async function loadCloudData(userId, key) {
   try {
