@@ -1,17 +1,13 @@
 import { useEffect, useMemo, useRef, useState, useContext, createContext } from "react";
 import * as XLSX from 'xlsx';
 
-// --- CONFIGURATION JSONBIN (Stockage Cloud Simplifié) ---
-// 1. Allez sur jsonbin.io, créez un compte.
-// 2. Créez une clé API (Master Key) et collez-la ci-dessous (ou dans Vercel env variables).
-const JSONBIN_MASTER_KEY = import.meta.env.VITE_JSONBIN_KEY || '$2a$10$8lw30mk.nGdVcfus7gW7DuhPGfPlEDvbWNnJRs6QjGuQnLA0071GCY_ICI';
-const JSONBIN_BIN_ID = import.meta.env.VITE_JSONBIN_BIN_ID || null; // Laissez null pour auto-création
+// --- CONFIGURATION JSONBIN ---
+const JSONBIN_MASTER_KEY = import.meta.env.VITE_JSONBIN_KEY; 
+const JSONBIN_BIN_ID = import.meta.env.VITE_JSONBIN_BIN_ID || null;
+const IS_CLOUD_CONFIGURED = !!JSONBIN_MASTER_KEY;
 
-// Fonction pour charger les données depuis JSONBin
 async function loadCloudData() {
-  if (!JSONBIN_MASTER_KEY || JSONBIN_MASTER_KEY === '$2a$10$8lw30mk.nGdVcfus7gW7DuhPGfPlEDvbWNnJRs6QjGuQnLA0071GCY_ICI') return null;
-  if (!JSONBIN_BIN_ID) return null; // Pas de bin configuré
-
+  if (!IS_CLOUD_CONFIGURED || !JSONBIN_BIN_ID) return null;
   try {
     const res = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}/latest`, {
       headers: { 'X-Master-Key': JSONBIN_MASTER_KEY }
@@ -20,17 +16,14 @@ async function loadCloudData() {
     const data = await res.json();
     return data.record;
   } catch (e) {
-    console.error("Erreur chargement Cloud:", e);
+    console.error("Erreur Cloud Load:", e);
     return null;
   }
 }
 
-// Fonction pour sauvegarder vers JSONBin
 async function saveCloudData(data) {
-  if (!JSONBIN_MASTER_KEY || JSONBIN_MASTER_KEY === 'COLLEZ_VOTRE_MASTER_KEY_ICI') return;
-
+  if (!IS_CLOUD_CONFIGURED) return;
   try {
-    // Si on a un ID, on met à jour
     if (JSONBIN_BIN_ID) {
       await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}`, {
         method: 'PUT',
@@ -40,11 +33,9 @@ async function saveCloudData(data) {
         },
         body: JSON.stringify(data)
       });
-      console.log("☁️ Données synchronisées !");
-    } 
-    // Sinon on crée un nouveau Bin (une seule fois au début)
-    else {
-      const res = await fetch(`https://api.jsonbin.io/v3/b`, {
+      console.log("☁️ Sauvegarde Cloud réussie");
+    } else {
+       const res = await fetch(`https://api.jsonbin.io/v3/b`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -55,18 +46,20 @@ async function saveCloudData(data) {
       });
       const result = await res.json();
       if (result.metadata?.id) {
-        alert(`✅ Cloud initialisé !\n\nCopiez cet ID dans votre code ou Vercel (VITE_JSONBIN_BIN_ID) :\n\n${result.metadata.id}`);
+        alert(`✅ Cloud initialisé !\n\nCopiez cet ID dans Vercel (VITE_JSONBIN_BIN_ID) :\n\n${result.metadata.id}`);
       }
     }
   } catch (e) {
-    console.error("Erreur sauvegarde Cloud:", e);
+    console.error("Erreur Cloud Save:", e);
   }
 }
+// --- FIN CONFIGURATION ---
 
 const CHAT_HISTORY_KEY = "medrep_assistant_history_v1";
 
-// --- FIN CONFIGURATION ---/* ─────────────────────────────────────────────────────────────
- 
+/* ─────────────────────────────────────────────────────────────
+  GLOBAL STYLE
+───────────────────────────────────────────────────────────── */
 const GS = () => (
   <style>{`
     @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&display=swap');
@@ -341,34 +334,19 @@ const GS = () => (
 
     /* --- RESPONSIVE MOBILE --- */
     @media (max-width: 860px) {
-      /* Sidebar devient overlay */
       .sb { position: fixed; left: -260px; transition: left .2s ease; z-index: 100; box-shadow: none; }
       .sb.open { left: 0; box-shadow: 0 0 30px rgba(0,0,0,.5); }
       .main { width: 100%; }
-      
-      /* Topbar */
       .tb-title { font-size: 14px; }
-      
-      /* Bouton Hamburger (caché sur desktop) */
       .hamburger { display: flex !important; align-items: center; justify-content: center; width: 40px; height: 40px; background: var(--navy3); border: 1px solid var(--bdr); border-radius: 8px; color: var(--t1); font-size: 20px; cursor: pointer; margin-right: 10px; }
-      
-      /* Ajustements des grilles */
       .g2, .grid2, .fum-3col, .cd-section, .cd-section-2 { grid-template-columns: 1fr; }
       .kpi-grid, .cd-kpi-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
-      
-      /* Ajustements Planning */
       .pl-grid-week { grid-template-columns: 1fr; gap: 8px; }
       .pl-day { min-height: auto; }
-      
-      /* Tableaux */
       .tw { overflow-x: auto; -webkit-overflow-scrolling: touch; }
       table { min-width: 600px; }
-      
-      /* Modales */
       .vp-modal, .mo { max-width: 98%; width: 100%; height: 100vh; max-height: 100vh; border-radius: 0; }
       .vp-overlay { padding: 0; }
-      
-      /* Hide irrelevant desktop stuff */
       .sb-foot { display: none; }
     }
 
@@ -376,24 +354,6 @@ const GS = () => (
       .kpi-grid, .cd-kpi-grid { grid-template-columns: 1fr; }
       .vp-score-row { flex-direction: column; gap: 6px; }
       .vp-kpi { width: 100%; }
-    }
-
-    /* Styles pour l'export PDF / Impression */
-    @media print {
-      .sb, .bg, .topbar, .sb-foot, .vp-overlay, .toast-container, .btn, .chip-eye, input, select, button, .hamburger { display: none !important; }
-      .root { display: block !important; background: white !important; }
-      .main { width: 100% !important; height: auto !important; overflow: visible !important; }
-      .content { padding: 20px !important; background: white !important; color: #111 !important; overflow: visible !important; }
-      .card { background: white !important; border: 1px solid #eee !important; color: #111 !important; box-shadow: none !important; page-break-inside: avoid; }
-      .card-t { color: #000 !important; border-bottom: 1px solid #eee !important; margin-bottom: 10px !important; }
-      .kpi { background: #f9f9f9 !important; border: 1px solid #ddd !important; }
-      .kpi-val, .kpi-lbl { color: #000 !important; }
-      body, html { background: white !important; height: auto !important; }
-      .vp-modal { box-shadow: none !important; border: 1px solid #ccc !important; }
-      .tag { border: 1px solid currentColor !important; }
-      .tA { background: rgba(0, 200, 150, 0.1) !important; color: #006655 !important; }
-      .tB { background: rgba(200, 150, 0, 0.1) !important; color: #665500 !important; }
-      .tC { background: rgba(100, 100, 100, 0.1) !important; color: #333 !important; }
     }
   `}</style>
 );
