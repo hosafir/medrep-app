@@ -2250,7 +2250,8 @@ export default function App(){
   // --- Session Management ---
   const [session, setSession] = useState(null);
   const [loadingSession, setLoadingSession] = useState(true);
-  const [isSynced, setIsSynced] = useState(false); // Nouvelle ligne
+  const [isSynced, setIsSynced] = useState(false); // Protège contre l'écrasement des données
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -2265,8 +2266,13 @@ export default function App(){
   // --- States ---
   const enrich=d=>({...d,adoptionScore:d?.adoptionScore??null,mainObjection:d?.mainObjection??"",nextVisitGoal:d?.nextVisitGoal??"",priorityLevel:d?.priorityLevel??""});
   
-  // On garde les initialiseurs synchrones pour le rendu initial rapide
-  const[doctors,setDoctors]=useState(()=>{const saved=loadJSON("medrep_doctors_v1",null);if(Array.isArray(saved)&&saved.length)return stableSortDocs(saved.map(enrich));return stableSortDocs(DOCS_FALLBACK.map(enrich));});
+  // IMPORTANT : On initialise VIDE ou avec le local, mais JAMAIS avec DOCS_FALLBACK directement pour éviter d'écraser le cloud
+  const[doctors,setDoctors]=useState(()=>{
+    const saved=loadJSON("medrep_doctors_v1",null);
+    if(Array.isArray(saved)&&saved.length) return stableSortDocs(saved.map(enrich));
+    return []; // Retourne tableau vide si rien en local (pas de démo par défaut)
+  });
+  
   const[apiKey,setApiKey]=useState(()=>localStorage.getItem("medrep_apiKey")||"");
   const[provider,setProvider]=useState(()=>detectProvider(localStorage.getItem("medrep_apiKey")||""));
   const[model,setModel]=useState(()=>localStorage.getItem("medrep_model")||"");
@@ -2277,15 +2283,24 @@ export default function App(){
 
   // --- SYNC: Load from Cloud on Session Change ---
   useEffect(() => {
-    if (!session?.user) return;
+    // Sécurité : on ne sync que si on a un user valide
+    if (!session?.user?.id) return;
     
     async function syncFromCloud() {
       const userId = session.user.id;
       
       // Load doctors
       const cloudDoctors = await loadCloudData(userId, 'medrep_doctors_v1');
-      if (cloudDoctors && Array.isArray(cloudDoctors)) {
+      // Si le cloud a des données, on LES PREND (priorité au cloud)
+      if (cloudDoctors && Array.isArray(cloudDoctors) && cloudDoctors.length > 0) {
          setDoctors(stableSortDocs(cloudDoctors.map(enrich)));
+      } else {
+         // Si le cloud est vide mais qu'on a des données locales, on les uploade (premier sync)
+         const localDoctors = loadJSON("medrep_doctors_v1", []);
+         if (localDoctors.length > 0) {
+            console.log("Upload initial des données locales vers le cloud...");
+            await saveCloudData(userId, 'medrep_doctors_v1', localDoctors);
+         }
       }
       
       // Load products
@@ -2296,11 +2311,11 @@ export default function App(){
       const cloudActive = await loadCloudData(userId, 'medrep_active_product');
       if (cloudActive) setActiveProduct(cloudActive);
 
-      // IMPORTANT : On signale que la sync est finie
-      setIsSynced(true); 
+      setIsSynced(true); // On signale que la sync est finie
     }
     syncFromCloud();
   }, [session]);
+
   // --- SYNC: Save to LocalStorage (Instant) ---
   useEffect(()=>saveJSON("medrep_doctors_v1",doctors),[doctors]);
   useEffect(()=>{try{localStorage.setItem("medrep_apiKey",apiKey||"");}catch{}},[apiKey]);
@@ -2308,18 +2323,17 @@ export default function App(){
   useEffect(() => saveJSON("medrep_products", products), [products]);
   useEffect(() => saveJSON("medrep_active_product", activeProduct), [activeProduct]);
 
-   // --- SYNC: Save to Cloud (Uniquement si synchronisé !) ---
+  // --- SYNC: Save to Cloud (Uniquement si synchronisé !) ---
   useEffect(() => {
-    if (!session?.user || !isSynced) return; // Ajout de la condition !isSynced
-    
+    if (!session?.user?.id || !isSynced) return; // Sécurité : n'écrase pas le cloud tant qu'on n'a pas chargé ce qu'il y a dessus
     const timer = setTimeout(() => {
       saveCloudData(session.user.id, 'medrep_doctors_v1', doctors);
     }, 2000);
     return () => clearTimeout(timer);
-  }, [doctors, session, isSynced]); // Ajout de isSynced dans les dépendances
+  }, [doctors, session, isSynced]);
 
   useEffect(() => {
-    if (!session?.user) return;
+    if (!session?.user?.id) return;
     saveCloudData(session.user.id, 'medrep_products', products);
     saveCloudData(session.user.id, 'medrep_active_product', activeProduct);
   }, [products, activeProduct, session]);
@@ -2391,10 +2405,14 @@ export default function App(){
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setSession(null);
+    setIsSynced(false);
+    setDoctors([]); // Vide les données locales pour éviter les conflits au prochain login
   };
 
   if (loadingSession) return <div className="content"><div className="card"><div className="empty">Chargement...</div></div></div>;
-  if (!session) return <Auth />;
+  
+  // Sécurité supplémentaire : si session existe mais pas user, on force le login
+  if (!session || !session.user) return <Auth />;
 
   return(
     <ToastProvider>
@@ -2406,7 +2424,7 @@ export default function App(){
             <div className="logo-ic">🧠</div>
             <div><div className="logo-t">MedRep AI</div><div className="logo-s">Cloud</div></div>
             {mobileMenuOpen && <button className="btn btn-g" style={{marginLeft:"auto"}} onClick={()=>setMobileMenuOpen(false)}>✕</button>}
-          </div> {/* CORRECTION : Fermeture de sb-logo */}
+          </div>
       
           <div style={{padding:"10px 10px 0"}}>
             <label className="fl">Produit</label>
@@ -2431,7 +2449,8 @@ export default function App(){
           </nav>
 
           <div style={{marginTop:'auto', padding:10, borderTop:'1px solid var(--bdr)'}}>
-             <div className="mini" style={{marginBottom:5, wordBreak:'break-all'}}>📧 {session.user.email}</div>
+             {/* Sécurité : affiche l'email seulement s'il existe */}
+             <div className="mini" style={{marginBottom:5, wordBreak:'break-all'}}>📧 {session?.user?.email || "Utilisateur"}</div>
              <button className="btn btn-rose" style={{width:'100%', fontSize:11}} onClick={handleLogout}>🚪 Déconnexion</button>
           </div>
         </aside>
