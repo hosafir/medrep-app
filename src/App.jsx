@@ -1,45 +1,72 @@
 import { useEffect, useMemo, useRef, useState, useContext, createContext } from "react";
-// --- CONFIGURATION SUPABASE (CLOUD) ---
+import * as XLSX from 'xlsx';
 
-// REMPLACEZ PAR VOS CLÉS
-// --- CONFIGURATION SUPABASE (Version VITE CORRECTE) ---
-import { createClient } from '@supabase/supabase-js';
+// --- CONFIGURATION JSONBIN (Stockage Cloud Simplifié) ---
+// 1. Allez sur jsonbin.io, créez un compte.
+// 2. Créez une clé API (Master Key) et collez-la ci-dessous (ou dans Vercel env variables).
+const JSONBIN_MASTER_KEY = import.meta.env.VITE_JSONBIN_KEY || '$2a$10$8lw30mk.nGdVcfus7gW7DuhPGfPlEDvbWNnJRs6QjGuQnLA0071GCY_ICI';
+const JSONBIN_BIN_ID = import.meta.env.VITE_JSONBIN_BIN_ID || null; // Laissez null pour auto-création
 
-// Pour Vite, on utilise import.meta.env et le préfixe VITE_
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://ovrovuorcrzovhpvmmip.supabase.co';
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_P9oEZ1VGumaSo9GBMbRh3A_Jx6jWJ8O';
+// Fonction pour charger les données depuis JSONBin
+async function loadCloudData() {
+  if (!JSONBIN_MASTER_KEY || JSONBIN_MASTER_KEY === '$2a$10$8lw30mk.nGdVcfus7gW7DuhPGfPlEDvbWNnJRs6QjGuQnLA0071GCY_ICI') return null;
+  if (!JSONBIN_BIN_ID) return null; // Pas de bin configuré
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-// ... le reste du code (loadCloudData, etc.)
-// Fonction utilitaire pour charger depuis le Cloud (Nom différent pour éviter le conflit)
-async function loadCloudData(userId, key) {
   try {
-    const { data, error } = await supabase
-      .from('app_data')
-      .select('value')
-      .eq('user_id', userId)
-      .eq('key', key)
-      .single();
-    if (error) return null;
-    return data?.value;
-  } catch (e) { return null; }
+    const res = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}/latest`, {
+      headers: { 'X-Master-Key': JSONBIN_MASTER_KEY }
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.record;
+  } catch (e) {
+    console.error("Erreur chargement Cloud:", e);
+    return null;
+  }
 }
 
-// Fonction utilitaire pour sauvegarder vers le Cloud
-async function saveCloudData(userId, key, value) {
+// Fonction pour sauvegarder vers JSONBin
+async function saveCloudData(data) {
+  if (!JSONBIN_MASTER_KEY || JSONBIN_MASTER_KEY === 'COLLEZ_VOTRE_MASTER_KEY_ICI') return;
+
   try {
-    await supabase
-      .from('app_data')
-      .upsert({ user_id: userId, key, value, updated_at: new Date().toISOString() }, { onConflict: 'user_id,key' });
-  } catch (e) { console.error("Cloud save error", e); }
+    // Si on a un ID, on met à jour
+    if (JSONBIN_BIN_ID) {
+      await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Master-Key': JSONBIN_MASTER_KEY
+        },
+        body: JSON.stringify(data)
+      });
+      console.log("☁️ Données synchronisées !");
+    } 
+    // Sinon on crée un nouveau Bin (une seule fois au début)
+    else {
+      const res = await fetch(`https://api.jsonbin.io/v3/b`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Master-Key': JSONBIN_MASTER_KEY,
+          'X-Bin-Name': 'MedRep-Data'
+        },
+        body: JSON.stringify(data)
+      });
+      const result = await res.json();
+      if (result.metadata?.id) {
+        alert(`✅ Cloud initialisé !\n\nCopiez cet ID dans votre code ou Vercel (VITE_JSONBIN_BIN_ID) :\n\n${result.metadata.id}`);
+      }
+    }
+  } catch (e) {
+    console.error("Erreur sauvegarde Cloud:", e);
+  }
 }
-// --- FIN CONFIGURATION ---
+
 const CHAT_HISTORY_KEY = "medrep_assistant_history_v1";
 
-/* ─────────────────────────────────────────────────────────────
-  GLOBAL STYLE
-───────────────────────────────────────────────────────────── */
+// --- FIN CONFIGURATION ---/* ─────────────────────────────────────────────────────────────
+ 
 const GS = () => (
   <style>{`
     @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&display=swap');
@@ -2247,30 +2274,14 @@ function Auth() {
   APP
 ───────────────────────────────────────────────────────────── */
 export default function App(){
-  // --- Session Management ---
-  const [session, setSession] = useState(null);
-  const [loadingSession, setLoadingSession] = useState(true);
-  const [isSynced, setIsSynced] = useState(false); // Protège contre l'écrasement des données
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setLoadingSession(false);
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
-    return () => subscription.unsubscribe();
-  }, []);
-
   // --- States ---
   const enrich=d=>({...d,adoptionScore:d?.adoptionScore??null,mainObjection:d?.mainObjection??"",nextVisitGoal:d?.nextVisitGoal??"",priorityLevel:d?.priorityLevel??""});
   
-  // IMPORTANT : On initialise VIDE ou avec le local, mais JAMAIS avec DOCS_FALLBACK directement pour éviter d'écraser le cloud
+  // 1. Charge les données Locales d'abord (pour l'affichage immédiat)
   const[doctors,setDoctors]=useState(()=>{
     const saved=loadJSON("medrep_doctors_v1",null);
     if(Array.isArray(saved)&&saved.length) return stableSortDocs(saved.map(enrich));
-    return []; // Retourne tableau vide si rien en local (pas de démo par défaut)
+    return stableSortDocs(DOCS_FALLBACK.map(enrich)); // Fallback si rien
   });
   
   const[apiKey,setApiKey]=useState(()=>localStorage.getItem("medrep_apiKey")||"");
@@ -2280,65 +2291,54 @@ export default function App(){
   const [products, setProducts] = useState(() => loadJSON("medrep_products", ["Fumetil"]));
   const [activeProduct, setActiveProduct] = useState(() => loadJSON("medrep_active_product", "Fumetil"));
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  
+  // 2. Flag pour savoir si on a réussi à charger le cloud
+  const [cloudLoaded, setCloudLoaded] = useState(false);
 
-  // --- SYNC: Load from Cloud on Session Change ---
+  // --- SYNC: Load from Cloud au démarrage ---
   useEffect(() => {
-    // Sécurité : on ne sync que si on a un user valide
-    if (!session?.user?.id) return;
-    
-    async function syncFromCloud() {
-      const userId = session.user.id;
-      
-      // Load doctors
-      const cloudDoctors = await loadCloudData(userId, 'medrep_doctors_v1');
-      // Si le cloud a des données, on LES PREND (priorité au cloud)
-      if (cloudDoctors && Array.isArray(cloudDoctors) && cloudDoctors.length > 0) {
-         setDoctors(stableSortDocs(cloudDoctors.map(enrich)));
+    async function init() {
+      const cloudData = await loadCloudData();
+      if (cloudData) {
+        // Si le cloud a des données, on les utilise (écrase le local)
+        if (cloudData.doctors) setDoctors(stableSortDocs(cloudData.doctors.map(enrich)));
+        if (cloudData.products) setProducts(cloudData.products);
+        if (cloudData.activeProduct) setActiveProduct(cloudData.activeProduct);
+        setCloudLoaded(true);
+        console.log("✅ Données chargées depuis JSONBin");
       } else {
-         // Si le cloud est vide mais qu'on a des données locales, on les uploade (premier sync)
-         const localDoctors = loadJSON("medrep_doctors_v1", []);
-         if (localDoctors.length > 0) {
-            console.log("Upload initial des données locales vers le cloud...");
-            await saveCloudData(userId, 'medrep_doctors_v1', localDoctors);
-         }
+        console.log("ℹ️ Aucune donnée cloud trouvée (ou pas encore configuré).");
+        setCloudLoaded(true);
       }
-      
-      // Load products
-      const cloudProducts = await loadCloudData(userId, 'medrep_products');
-      if (cloudProducts) setProducts(cloudProducts);
-      
-      // Load Active Product
-      const cloudActive = await loadCloudData(userId, 'medrep_active_product');
-      if (cloudActive) setActiveProduct(cloudActive);
-
-      setIsSynced(true); // On signale que la sync est finie
     }
-    syncFromCloud();
-  }, [session]);
+    init();
+  }, []);
 
   // --- SYNC: Save to LocalStorage (Instant) ---
   useEffect(()=>saveJSON("medrep_doctors_v1",doctors),[doctors]);
-  useEffect(()=>{try{localStorage.setItem("medrep_apiKey",apiKey||"");}catch{}},[apiKey]);
-  useEffect(()=>{try{localStorage.setItem("medrep_model",model||"");}catch{}},[model]);
-  useEffect(() => saveJSON("medrep_products", products), [products]);
+  useEffect(()=>saveJSON("medrep_products", products), [products]);
   useEffect(() => saveJSON("medrep_active_product", activeProduct), [activeProduct]);
 
-  // --- SYNC: Save to Cloud (Uniquement si synchronisé !) ---
+  // --- SYNC: Save to Cloud (Debounce) ---
   useEffect(() => {
-    if (!session?.user?.id || !isSynced) return; // Sécurité : n'écrase pas le cloud tant qu'on n'a pas chargé ce qu'il y a dessus
+    // On ne sauvegarde sur le cloud QUE si on a réussi à charger une première fois
+    // Cela évite d'écraser le cloud avec des données vides au démarrage
+    if (!cloudLoaded) return;
+    
     const timer = setTimeout(() => {
-      saveCloudData(session.user.id, 'medrep_doctors_v1', doctors);
-    }, 2000);
+      console.log("☁️ Sauvegarde sur JSONBin...");
+      saveCloudData({
+        doctors,
+        products,
+        activeProduct,
+        lastSaved: new Date().toISOString()
+      });
+    }, 3000); // Sauvegarde 3 secondes après la dernière modification
+
     return () => clearTimeout(timer);
-  }, [doctors, session, isSynced]);
+  }, [doctors, products, activeProduct, cloudLoaded]);
 
-  useEffect(() => {
-    if (!session?.user?.id) return;
-    saveCloudData(session.user.id, 'medrep_products', products);
-    saveCloudData(session.user.id, 'medrep_active_product', activeProduct);
-  }, [products, activeProduct, session]);
-
-  // --- Logic ---
+  // --- Logique standard ---
   useEffect(()=>{setProvider(detectProvider(apiKey));},[apiKey]);
 
   const addProduct = (name) => {
@@ -2402,18 +2402,6 @@ export default function App(){
   
   useEffect(() => { setMobileMenuOpen(false); }, [page]);
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    setSession(null);
-    setIsSynced(false);
-    setDoctors([]); // Vide les données locales pour éviter les conflits au prochain login
-  };
-
-  if (loadingSession) return <div className="content"><div className="card"><div className="empty">Chargement...</div></div></div>;
-  
-  // Sécurité supplémentaire : si session existe mais pas user, on force le login
-  if (!session || !session.user) return <Auth />;
-
   return(
     <ToastProvider>
       <GS/>
@@ -2447,12 +2435,6 @@ export default function App(){
               </div>
             ))}
           </nav>
-
-          <div style={{marginTop:'auto', padding:10, borderTop:'1px solid var(--bdr)'}}>
-             {/* Sécurité : affiche l'email seulement s'il existe */}
-             <div className="mini" style={{marginBottom:5, wordBreak:'break-all'}}>📧 {session?.user?.email || "Utilisateur"}</div>
-             <button className="btn btn-rose" style={{width:'100%', fontSize:11}} onClick={handleLogout}>🚪 Déconnexion</button>
-          </div>
         </aside>
         
         {mobileMenuOpen && <div className="ov" style={{zIndex:90, background:'rgba(0,0,0,0.5)'}} onClick={()=>setMobileMenuOpen(false)}></div>}
