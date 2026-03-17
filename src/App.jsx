@@ -1064,9 +1064,9 @@ function SettingsPage({apiKey,setApiKey,model,setModel,provider,setProvider, pro
   );
 }
 /* ─────────────────────────────────────────────────────────────
-  Doctors Page (Version Stable)
+  Doctors Page (Version Finale avec Jour Préféré)
 ───────────────────────────────────────────────────────────── */
-function DoctorsPage({doctors, setDoctors, activeProduct, products}){
+function DoctorsPage({ doctors, setDoctors, activeProduct, products }){
   const[q,setQ]=useState("");
   const[editing,setEditing]=useState(null);
   const[showNew,setShowNew]=useState(false);
@@ -1094,7 +1094,8 @@ function DoctorsPage({doctors, setDoctors, activeProduct, products}){
         nextVisitGoal:doc?.nextVisitGoal??"",
         priorityLevel:doc?.priorityLevel??"",
         visitFrequency:doc?.visitFrequency||"quarterly",
-        product: doc.product || activeProduct // On s'assure qu'il y a un produit
+        product: doc.product || activeProduct,
+        preferredDay: doc?.preferredDay ?? null // Prise en compte du jour préféré
       };
       const exists=prev.some(x=>x.id===nd.id);
       return stableSortDocs(exists?prev.map(x=>x.id===nd.id?nd:x):[...prev,nd]);
@@ -1107,7 +1108,6 @@ function DoctorsPage({doctors, setDoctors, activeProduct, products}){
   };
   
   const exportJSON=()=>{
-    // On exporte tous les médecins (pas seulement les filtrés)
     const blob=new Blob([JSON.stringify({doctors},null,2)],{type:"application/json"});
     const url=URL.createObjectURL(blob);
     const a=document.createElement("a");
@@ -1116,9 +1116,8 @@ function DoctorsPage({doctors, setDoctors, activeProduct, products}){
   };
   
   const exportCSV=()=>{
-    const header=["id","name","city","sector","potential","phone","email","activite","adoptionScore","mainObjection","nextVisitGoal","priorityLevel","visitFrequency","product"];
+    const header=["id","name","city","sector","potential","phone","email","activite","adoptionScore","mainObjection","nextVisitGoal","priorityLevel","visitFrequency","product","preferredDay"];
     const lines=[header.join(",")];
-    // On exporte tous les médecins
     for(const d of doctors){
       const row=header.map(k=>`"${(d[k]??"").toString().replaceAll('"','""')}"`);
       lines.push(row.join(","));
@@ -1136,9 +1135,8 @@ function DoctorsPage({doctors, setDoctors, activeProduct, products}){
     try{
       const list=await importDoctorsFromFile(file);
       if(!list.length){alert("Aucun médecin valide.");return;}
-      // On assigne le produit ACTIF aux médecins importés
       const updatedList = list.map(d => ({...d, product: activeProduct}));
-      setDoctors(prev => stableSortDocs([...prev, ...updatedList])); // On ajoute aux existants
+      setDoctors(prev => stableSortDocs([...prev, ...updatedList]));
       alert(`Import OK ✅ (${list.length} médecins importés dans "${activeProduct}")`);
     }catch(e){alert(`Erreur import ❌\n${e.message}`);}
     finally{setImporting(false);}
@@ -1146,20 +1144,23 @@ function DoctorsPage({doctors, setDoctors, activeProduct, products}){
   
   const allReports=useMemo(()=>loadJSON("medrep_reports_v1",{}),[]);
 
+  // Helper jour préféré
+  const dayLabels = {1: "Lun", 2: "Mar", 3: "Mer", 4: "Jeu", 5: "Ven"};
+
   return(
     <div className="content">
       <div className="card" style={{marginBottom:12}}>
         <div className="card-t">👨‍⚕️ Médecins <span className="pill">{doctors.length}</span> <span className="pill" style={{borderColor:"rgba(139,92,246,.3)",color:"var(--violet)"}}>{activeProduct}</span></div>
         <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
           <input className="fi" placeholder="Recherche…" value={q} onChange={e=>setQ(e.target.value)} style={{flex:1,minWidth:280}}/>
-          <button className="btn btn-p" onClick={()=>{setShowNew(true);setEditing({id:nextId,name:"",city:"",sector:"",potential:"B",phone:"",email:"",activite:"Privé",adoptionScore:null,mainObjection:"",nextVisitGoal:"",priorityLevel:"",visitFrequency:"quarterly", product: activeProduct});}}>➕ Ajouter</button>
+          <button className="btn btn-p" onClick={()=>{setShowNew(true);setEditing({id:nextId,name:"",city:"",sector:"",potential:"B",phone:"",email:"",activite:"Privé",adoptionScore:null,mainObjection:"",nextVisitGoal:"",priorityLevel:"",visitFrequency:"quarterly", product: activeProduct, preferredDay: null});}}>➕ Ajouter</button>
         </div>
         <div className="sep"/>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <button className="btn btn-g" onClick={exportJSON}>⬇️ JSON</button>
           <button className="btn btn-g" onClick={exportCSV}>⬇️ CSV</button>
           <label className="btn btn-blue" style={{cursor:"pointer"}}>
-            {importing?"Import…":"⬆️ Import (assigne au produit actif)"}
+            {importing?"Import…":"⬆️ Import"}
             <input type="file" accept=".xlsx,.xls,.csv,.json" style={{display:"none"}} onChange={async e=>{const f=e.target.files?.[0];if(f)await handleImport(f);e.target.value="";}} />
           </label>
           <button className="btn btn-rose" onClick={()=>{if(!confirm("Reset total ?"))return;setDoctors(DOCS_FALLBACK);}}>🧹 Reset</button>
@@ -1172,10 +1173,10 @@ function DoctorsPage({doctors, setDoctors, activeProduct, products}){
             <thead>
               <tr>
                 <th>Nom</th>
-                <th>Ville</th>
+                <th>Ville / Secteur</th>
                 <th style={{textAlign:'center'}}>Pot.</th>
                 <th style={{textAlign:'center'}}>Score</th>
-                <th>Produit</th> {/* Nouvelle colonne */}
+                <th style={{textAlign:'center'}}>Jour Préféré</th> {/* Nouvelle colonne */}
                 <th>Frein</th>
                 <th style={{textAlign:'center'}}>Prio</th>
                 <th style={{textAlign:'right'}}>Actions</th>
@@ -1190,12 +1191,15 @@ function DoctorsPage({doctors, setDoctors, activeProduct, products}){
                 return (
                   <tr key={d.id}>
                     <td style={{fontWeight:700}}>{d.name}</td>
-                    <td>{d.city}</td>
+                    <td>{d.city} {d.sector ? <span className="mini" style={{opacity:0.7}}>· {d.sector}</span> : ""}</td>
                     <td style={{textAlign:'center'}}><span className={`tag t${d.potential||"C"}`}>{d.potential||"C"}</span></td>
                     <td style={{textAlign:'center', fontWeight:700, color:scoreColor(d.adoptionScore)}}>
                       {d.adoptionScore==null?"—":`${d.adoptionScore}`}
                     </td>
-                    <td><span className="pill" style={{fontSize:9, borderColor:"rgba(139,92,246,.2)", color:"var(--violet)"}}>{d.product || "N/A"}</span></td> {/* Affichage produit */}
+                    {/* Affichage Jour Préféré */}
+                    <td style={{textAlign:'center'}}>
+                      {d.preferredDay ? <span className="soft-badge ok">{dayLabels[d.preferredDay]}</span> : <span className="mini">—</span>}
+                    </td>
                     <td style={{maxWidth:140, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}} title={d.mainObjection}>{d.mainObjection||"—"}</td>
                     <td style={{textAlign:'center'}}><span className={`tag ${priorityBadgeClass(d.priorityLevel)}`}>{d.priorityLevel||"—"}</span></td>
                     <td style={{textAlign:'right'}}>
@@ -1211,7 +1215,7 @@ function DoctorsPage({doctors, setDoctors, activeProduct, products}){
       </div>
 
       {editing&&(
-        <Modal title={showNew?"Ajouter un médecin":"Éditer médecin"} subtitle="Associer ce médecin à un produit" onClose={()=>setEditing(null)}
+        <Modal title={showNew?"Ajouter un médecin":"Éditer médecin"} subtitle="Configurez les détails et le jour de visite préféré" onClose={()=>setEditing(null)}
           actions={[
             {label:"Annuler",kind:"g",onClick:()=>setEditing(null)},
             {label:"Enregistrer",kind:"p",onClick:()=>{
@@ -1226,29 +1230,38 @@ function DoctorsPage({doctors, setDoctors, activeProduct, products}){
                 mainObjection:normalizeText(editing.mainObjection),
                 nextVisitGoal:normalizeText(editing.nextVisitGoal),
                 priorityLevel:(editing.priorityLevel||"").toLowerCase(),
-                product: editing.product || activeProduct // Sauvegarde du produit choisi
+                preferredDay: editing.preferredDay ? parseInt(editing.preferredDay) : null
               });
               setEditing(null);
             }}
           ]}>
           <div className="grid2">
-                        <div className="fg">
-              <label className="fl">Spécialité</label>
-              <input className="fi" placeholder="Cardiologie, Neurologie..." value={editing.specialite || ""} onChange={e=>setEditing(p => ({...p, specialite: e.target.value}))}/>
-            </div>
+            <div className="fg"><label className="fl">Spécialité</label><input className="fi" placeholder="Cardiologie..." value={editing.specialite || ""} onChange={e=>setEditing(p => ({...p, specialite: e.target.value}))}/></div>
             <div className="fg"><label className="fl">Nom</label><input className="fi" value={editing.name} onChange={e=>setEditing(p=>({...p,name:e.target.value}))}/></div>
             <div className="fg"><label className="fl">Ville</label><input className="fi" value={editing.city} onChange={e=>setEditing(p=>({...p,city:e.target.value}))}/></div>
+            <div className="fg"><label className="fl">Secteur / Clinique</label><input className="fi" placeholder="Ex: Clinique Marjane" value={editing.sector || ""} onChange={e=>setEditing(p=>({...p,sector:e.target.value}))}/></div>
             <div className="fg"><label className="fl">Potentiel</label><select className="fs" value={editing.potential||"B"} onChange={e=>setEditing(p=>({...p,potential:e.target.value}))}><option value="A">A</option><option value="B">B</option><option value="C">C</option></select></div>
             
-            {/* NOUVEAU : Sélecteur de Produit */}
+            {/* NOUVEAU : Sélecteur Jour Préféré */}
             <div className="fg">
-              <label className="fl">Produit associé</label>
+              <label className="fl">Jour de visite préféré</label>
+              <select className="fs" value={editing.preferredDay || ""} onChange={e=>setEditing(p=>({...p, preferredDay: e.target.value ? parseInt(e.target.value) : null}))}>
+                <option value="">Aucune préférence</option>
+                <option value="1">Lundi</option>
+                <option value="2">Mardi</option>
+                <option value="3">Mercredi</option>
+                <option value="4">Jeudi</option>
+                <option value="5">Vendredi</option>
+              </select>
+              <div className="mini" style={{marginTop:2}}>L'algo priorisera ce jour.</div>
+            </div>
+
+            <div className="fg"><label className="fl">Produit</label>
               <select className="fs" value={editing.product || activeProduct} onChange={e=>setEditing(p=>({...p,product:e.target.value}))}>
                 {products.map(p => <option key={p} value={p}>{p}</option>)}
               </select>
-              <div className="mini" style={{marginTop:2}}>Ce médecin apparaîtra uniquement pour ce produit.</div>
             </div>
-
+            
             <div className="fg"><label className="fl">Score (0-100)</label><input className="fi" type="number" min={0} max={100} value={editing.adoptionScore??""} onChange={e=>setEditing(p=>({...p,adoptionScore:e.target.value===""?null:Math.max(0,Math.min(100,parseInt(e.target.value,10)||0))}))}/></div>
             <div className="fg" style={{gridColumn:"1 / -1"}}><label className="fl">Frein principal</label><textarea className="fta" value={editing.mainObjection||""} onChange={e=>setEditing(p=>({...p,mainObjection:e.target.value}))}/></div>
             <div className="fg" style={{gridColumn:"1 / -1"}}><label className="fl">Objectif next visit</label><textarea className="fta" value={editing.nextVisitGoal||""} onChange={e=>setEditing(p=>({...p,nextVisitGoal:e.target.value}))}/></div>
@@ -1461,7 +1474,7 @@ Tonalité: Adaptée au sentiment ${sentiment.lbl}.`;
 }
 
 /* ─────────────────────────────────────────────────────────────
-  Helpers & Logic Planning
+  Helpers & Logic Planning (Version Finale)
 ───────────────────────────────────────────────────────────── */
 function pickEvenly(days, target) {
   if (target <= 0) return [];
@@ -1475,176 +1488,275 @@ function pickEvenly(days, target) {
   return Array.from(new Set(chosen)).slice(0, target);
 }
 
-function generatePlanning({ doctors, year, monthIndex, perDay, directives }) {
+function generatePlanning({ doctors, year, monthIndex, perDay, directives, allReports }) {
   const workdays = listWorkdays(year, monthIndex);
   const plan = {};
   workdays.forEach(d => { plan[d] = []; });
   
   const usedDoctors = new Set();
   const weeks = groupWorkdaysByWeek(workdays);
+  const now = Date.now();
+  const idToDoc = new Map(); doctors.forEach(d => idToDoc.set(d.id, d));
+
+  // 1. Filtrage par Fréquence
+  const eligibleDoctors = doctors.filter(d => {
+    const freqDays = getFrequencyDays(d.visitFrequency);
+    const docReports = (allReports && allReports[d.id]) ? allReports[d.id] : [];
+    if (!docReports || docReports.length === 0) return true;
+    const sortedReports = [...docReports].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const lastVisit = new Date(sortedReports[0].createdAt);
+    return Math.floor((now - lastVisit) / 86400000) >= (freqDays - 7);
+  });
+
+  // 2. NOUVEAU : Traitement des JOURS PRÉFÉRÉS (Fixes)
+  // On place ces médecins AVANT tout le monde (Contrainte forte)
+  const doctorsWithPreference = eligibleDoctors.filter(d => d.preferredDay);
+  const prefMap = {}; // 1=Lun, 5=Ven
+  doctorsWithPreference.forEach(d => {
+    const dayIdx = d.preferredDay;
+    if (!prefMap[dayIdx]) prefMap[dayIdx] = [];
+    prefMap[dayIdx].push(d);
+  });
+  // Tri par potentiel pour l'ordre dans la journée
+  Object.values(prefMap).forEach(arr => arr.sort((a, b) => potRank(a.potential) - potRank(b.potential)));
+
+  for (const day of workdays) {
+    const dt = new Date(day);
+    const dayIdx = dt.getDay(); // 1-5
+    const candidates = prefMap[dayIdx] || [];
+    
+    const inCluster = id => CLUSTER.includes(idToDoc.get(id)?.city);
+    // Contrainte Cluster respectée même pour les préférences
+    if (inCluster(candidates[0]?.id) && !isWedThu(day)) continue; 
+
+    for (const doc of candidates) {
+      if (usedDoctors.has(doc.id)) continue;
+      if (plan[day].length < perDay) {
+        plan[day].push(doc.id);
+        usedDoctors.add(doc.id);
+      }
+    }
+  }
+
+  // 3. Construction des GROUPES (Clusters)
+  const normalizeLocation = (str) => str ? str.toLowerCase().replace(/[^a-z0-9]/g, '').trim() : '';
+  const groupsMap = new Map();
   
-  // 1. Appliquer les DIRECTIVES
-  const activeDirectives = (directives || []).filter(dir => dir.isActive).sort((a,b) => a.week - b.week);
+  eligibleDoctors.filter(d => !usedDoctors.has(d.id)).forEach(d => {
+    const isClinic = d.sector && /clinique|hôpital|center|centre|polyclinique/i.test(d.sector);
+    let groupKey, groupName, groupType;
+    if (isClinic) {
+      groupKey = `CLINIC::${d.city}::${normalizeLocation(d.sector)}`;
+      groupName = d.sector;
+      groupType = 'clinic';
+    } else {
+      groupKey = `CITY::${d.city}`;
+      groupName = d.city;
+      groupType = 'city';
+    }
+    if (!groupsMap.has(groupKey)) groupsMap.set(groupKey, { name: groupName, doctors: [], type: groupType, city: d.city });
+    groupsMap.get(groupKey).doctors.push(d);
+  });
+
+  const groupsArray = Array.from(groupsMap.values()).sort((a, b) => {
+    if (a.type === 'clinic' && b.type !== 'clinic') return -1;
+    if (a.type !== 'clinic' && b.type === 'clinic') return 1;
+    return b.doctors.length - a.doctors.length;
+  });
+
+  const inCluster = id => CLUSTER.includes(idToDoc.get(id)?.city);
+  const canPlace = (id, day) => (!inCluster(id) || isWedThu(day));
+  
+  const placeGroupOnDay = (doctorsInGroup, targetDay) => {
+    let placedCount = 0;
+    const doctorsToPlace = doctorsInGroup.filter(d => !usedDoctors.has(d.id));
+    for (const doc of doctorsToPlace) {
+      if (plan[targetDay].length < perDay && canPlace(doc.id, targetDay)) {
+        plan[targetDay].push(doc.id);
+        usedDoctors.add(doc.id);
+        placedCount++;
+      }
+    }
+    return placedCount;
+  };
+
+  // 4. Application des DIRECTIVES PRO
+  const activeDirectives = (directives || [])
+    .filter(dir => {
+      if (!dir.isActive) return false;
+      const start = dir.startDate ? new Date(dir.startDate) : null;
+      const end = dir.endDate ? new Date(dir.endDate) : null;
+      if (start && now < start.getTime()) return false;
+      if (end && now > end.getTime()) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const pA = a.priority || 5; 
+      const pB = b.priority || 5;
+      if (pA !== pB) return pB - pA; // Haute priorité d'abord
+      return a.week - b.week;
+    });
 
   activeDirectives.forEach(dir => {
+    let visitCount = 0;
+    const maxVisits = dir.maxVisits || Infinity;
     const weekDays = weeks[dir.week - 1] || [];
     const targetDays = weekDays.filter(day => {
       const d = new Date(day);
       return dir.days.includes(d.getDay());
     });
 
-    const candidates = doctors.filter(d => 
-      !usedDoctors.has(d.id) &&
-      (dir.cities.length === 0 || dir.cities.includes(d.city)) &&
-      (dir.specialties.length === 0 || dir.specialties.includes(d.specialite))
-    ).sort((a, b) => potRank(a.potential) - potRank(b.potential));
+    const directiveCandidates = eligibleDoctors.filter(d => {
+      if (usedDoctors.has(d.id)) return false;
+      if (dir.products && dir.products.length > 0 && !dir.products.includes(d.product)) return false;
+      if (dir.potentials && dir.potentials.length > 0 && !dir.potentials.includes(d.potential)) return false;
+      if (dir.cities && dir.cities.length > 0 && !dir.cities.includes(d.city)) return false;
+      if (dir.specialties && dir.specialties.length > 0 && !dir.specialties.includes(d.specialite)) return false;
+      if (dir.excludeIds && dir.excludeIds.includes(d.id)) return false;
+      return true;
+    }).sort((a, b) => potRank(a.potential) - potRank(b.potential));
 
-    let dayIdx = 0;
-    candidates.forEach(doc => {
-      for(let i=0; i<targetDays.length; i++){
-        const dayIndex = (dayIdx + i) % targetDays.length;
-        const day = targetDays[dayIndex];
-        if (plan[day].length < perDay) {
-          plan[day].push(doc.id);
-          usedDoctors.add(doc.id);
-          dayIdx = (dayIndex + 1) % targetDays.length;
-          break;
-        }
-      }
+    // Sous-groupement
+    const dirGroups = {};
+    directiveCandidates.forEach(d => {
+       const key = (d.sector && /clinique|hôpital/i.test(d.sector)) ? d.sector : d.city;
+       if(!dirGroups[key]) dirGroups[key] = [];
+       dirGroups[key].push(d);
     });
+
+    for(const group of Object.values(dirGroups)) {
+      if (visitCount >= maxVisits) break;
+      let remaining = [...group];
+      const sortedTargetDays = [...targetDays].sort((a,b) => {
+         const cityA = plan[a].filter(id => idToDoc.get(id)?.city === group[0].city).length;
+         const cityB = plan[b].filter(id => idToDoc.get(id)?.city === group[0].city).length;
+         return cityB - cityA;
+      });
+
+      for (const day of sortedTargetDays) {
+        if (remaining.length === 0 || visitCount >= maxVisits) break;
+        remaining = remaining.filter(doc => {
+          if (visitCount >= maxVisits) return true;
+          if (plan[day].length < perDay && canPlace(doc.id, day)) {
+            plan[day].push(doc.id);
+            usedDoctors.add(doc.id);
+            visitCount++;
+            return false;
+          }
+          return true;
+        });
+      }
+    }
   });
 
-  // 2. Remplissage STANDARD
-  const remainingDoctors = doctors.filter(d => !usedDoctors.has(d.id));
-  const remainingSorted = stableSortDocs(remainingDoctors);
-  
-  const clusterDocs = remainingSorted.filter(d => CLUSTER.includes(d.city));
-  const wedThu = workdays.filter(d => isWedThu(d));
-  const targetClusterCount = Math.min(clusterDocs.length, Math.ceil(wedThu.length * (perDay / 2))); 
-  const clusterDays = pickEvenly(wedThu, targetClusterCount);
+  // 5. Remplissage Standard (Cluster First)
+  for (const group of groupsArray) {
+    const availableDocs = group.doctors.filter(d => !usedDoctors.has(d.id));
+    if (availableDocs.length === 0) continue;
 
-  const idToDoc = new Map(); doctors.forEach(d => idToDoc.set(d.id, d));
-  const inCluster = id => CLUSTER.includes(idToDoc.get(id)?.city);
-  const canPlace = (id, day) => (!inCluster(id) || isWedThu(day));
-  
-  const takeForDay = (pool, day, k) => {
-    const taken = [];
-    for (let i = 0; i < pool.length && taken.length < k;) {
-      const id = pool[i];
-      if (canPlace(id, day)) { taken.push(id); pool.splice(i, 1); } else i++;
+    if (group.type === 'clinic') {
+      let bestDay = null;
+      for (const day of workdays) {
+        if ((perDay - plan[day].length) >= availableDocs.length) {
+           bestDay = day; break;
+        }
+      }
+      if (bestDay) { placeGroupOnDay(availableDocs, bestDay); continue; }
     }
-    return taken;
-  };
 
-  const clusterPool = clusterDocs.map(d => d.id);
-  for (const day of clusterDays) {
-    const slots = perDay - plan[day].length;
-    if (slots <= 0) continue;
-    plan[day].push(...takeForDay(clusterPool, day, slots));
+    const sortedDays = [...workdays].sort((a, b) => {
+      const cityA = plan[a].filter(id => idToDoc.get(id)?.city === group.city).length;
+      const cityB = plan[b].filter(id => idToDoc.get(id)?.city === group.city).length;
+      if (cityA !== cityB) return cityB - cityA;
+      return (perDay - plan[a].length) - (perDay - plan[b].length);
+    });
+
+    for (const day of sortedDays) {
+      if (availableDocs.filter(d => !usedDoctors.has(d.id)).length === 0) break;
+      placeGroupOnDay(availableDocs, day);
+    }
   }
 
-  const remainingIds = remainingSorted.map(d => d.id).filter(id => !usedDoctors.has(id));
-  for (const day of workdays) {
-    const slots = perDay - plan[day].length;
-    if (slots <= 0) continue;
-    plan[day].push(...takeForDay(remainingIds, day, slots));
-  }
-  
   const scheduled = new Set(Object.values(plan).flat());
-  const backlog = doctors.filter(d => !scheduled.has(d.id)).map(d => d.id);
-
+  const backlog = eligibleDoctors.filter(d => !scheduled.has(d.id)).map(d => d.id);
   return { plan, backlog, meta: { year, monthIndex, perDay } };
 }
 
-/* ─── Directive Modal (Gestion des règles) ─── */
+/* ─── Directive Modal Pro ─── */
 function DirectiveModal({ directive, onSave, onClose, doctors }) {
   const [form, setForm] = useState(directive || {
-    id: `dir_${Date.now()}`,
-    name: "",
-    week: 1,
-    days: [3, 4], 
-    cities: [],
-    specialties: [],
-    isActive: true
+    id: `dir_${Date.now()}`, name: "", isActive: true,
+    week: 1, days: [3, 4], startDate: "", endDate: "",
+    priority: 5, maxVisits: "",
+    cities: [], specialties: [], products: [], potentials: [], excludeIds: []
   });
 
   const allCities = useMemo(() => [...new Set(doctors.map(d => d.city))].sort(), [doctors]);
   const allSpecialties = useMemo(() => [...new Set(doctors.map(d => d.specialite).filter(Boolean))].sort(), [doctors]);
+  const allProducts = useMemo(() => [...new Set(doctors.map(d => d.product).filter(Boolean))].sort(), [doctors]);
+  const doctorOptions = useMemo(() => doctors.map(d => ({id: d.id, name: d.name})), [doctors]);
 
   const toggleDay = (day) => {
-    setForm(prev => ({
-      ...prev,
-      days: prev.days.includes(day) ? prev.days.filter(d => d !== day) : [...prev.days, day].sort()
-    }));
+    setForm(prev => ({ ...prev, days: prev.days.includes(day) ? prev.days.filter(d => d !== day) : [...prev.days, day].sort() }));
   };
 
   const toggleArray = (field, value) => {
-    setForm(prev => ({
-      ...prev,
-      [field]: prev[field].includes(value) ? prev[field].filter(v => v !== value) : [...prev[field], value]
-    }));
+    setForm(prev => ({ ...prev, [field]: prev[field].includes(value) ? prev[field].filter(v => v !== value) : [...prev[field], value] }));
   };
+
+  const chipContainer = { display: 'flex', gap: 4, flexWrap: 'wrap', maxHeight: 100, overflowY: 'auto', padding: "4px", background: "var(--navy4)", borderRadius: 6, marginTop: 4 };
 
   return (
     <div className="vp-overlay" onMouseDown={onClose}>
-      <div className="vp-modal" style={{ maxWidth: 600 }} onMouseDown={e => e.stopPropagation()}>
+      <div className="vp-modal" style={{ maxWidth: 700, maxHeight: '90vh' }} onMouseDown={e => e.stopPropagation()}>
         <div className="vp-header">
-          <div className="vp-name">{directive ? "Modifier la Règle" : "Nouvelle Règle"}</div>
+          <div className="vp-name">{directive ? "Modifier la Règle" : "Nouvelle Règle Intelligente"}</div>
+          <div className="vp-sub">Priorité, Limites, et Ciblage.</div>
         </div>
         
-        <div className="vp-body">
-          <div className="fg">
-            <label className="fl">Nom de la règle</label>
-            <input className="fi" value={form.name} onChange={e => setForm(p => ({...p, name: e.target.value}))} placeholder="Ex: Tournée Oncologie"/>
-          </div>
+        <div className="vp-body" style={{ overflowY: 'auto' }}>
+          <div className="fg"><label className="fl">Nom de la règle</label><input className="fi" value={form.name} onChange={e => setForm(p => ({...p, name: e.target.value}))} placeholder="Ex: Focus A - Cardiologie"/></div>
 
           <div className="grid2">
-            <div className="fg">
-              <label className="fl">Semaine</label>
-              <select className="fs" value={form.week} onChange={e => setForm(p => ({...p, week: parseInt(e.target.value)}))}>
-                {[1,2,3,4,5].map(w => <option key={w} value={w}>Semaine {w}</option>)}
-              </select>
-            </div>
-            <div className="fg">
-              <label className="fl">Jours</label>
-              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                {["Lun", "Mar", "Mer", "Jeu", "Ven"].map((d, i) => (
-                  <button key={i} className={`btn ${form.days.includes(i+1) ? "btn-p" : "btn-g"}`} style={{ padding: "4px 8px", fontSize: 10 }} onClick={() => toggleDay(i + 1)}>{d}</button>
-                ))}
-              </div>
-            </div>
+            <div className="fg"><label className="fl">Priorité (1-10)</label><input className="fi" type="number" min="1" max="10" value={form.priority} onChange={e => setForm(p => ({...p, priority: parseInt(e.target.value)}))} /><div className="mini">10 = Urgent</div></div>
+            <div className="fg"><label className="fl">Max Visites</label><input className="fi" type="number" placeholder="Illimité" value={form.maxVisits} onChange={e => setForm(p => ({...p, maxVisits: e.target.value}))} /></div>
           </div>
 
-          <div className="fg">
-            <label className="fl">Villes</label>
-            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxHeight: 80, overflowY: 'auto' }}>
-              {allCities.map(c => (
-                <button key={c} className={`btn ${form.cities.includes(c) ? "btn-p" : "btn-g"}`} style={{ padding: "2px 6px", fontSize: 9 }} onClick={() => toggleArray("cities", c)}>{c}</button>
-              ))}
-            </div>
+          <div className="sep"/><div className="card-t" style={{fontSize: 12}}>📅 Période & Jours</div>
+          <div className="grid2">
+             <div className="fg"><label className="fl">Semaine</label><select className="fs" value={form.week} onChange={e => setForm(p => ({...p, week: parseInt(e.target.value)}))}>{[1,2,3,4,5].map(w => <option key={w} value={w}>Semaine {w}</option>)}</select></div>
+             <div className="fg"><label className="fl">Jours</label><div style={{display: 'flex', gap: 4}}>{["Lun", "Mar", "Mer", "Jeu", "Ven"].map((d, i) => (<button key={i} className={`btn ${form.days.includes(i+1) ? "btn-p" : "btn-g"}`} style={{ padding: "4px 8px", fontSize: 10 }} onClick={() => toggleDay(i + 1)}>{d}</button>))}</div></div>
+          </div>
+          <div className="grid2">
+            <div className="fg"><label className="fl">Début validité</label><input className="fi" type="date" value={form.startDate} onChange={e => setForm(p => ({...p, startDate: e.target.value}))} /></div>
+            <div className="fg"><label className="fl">Fin validité</label><input className="fi" type="date" value={form.endDate} onChange={e => setForm(p => ({...p, endDate: e.target.value}))} /></div>
           </div>
 
-          <div className="fg">
-            <label className="fl">Spécialités</label>
-            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxHeight: 80, overflowY: 'auto' }}>
-              {allSpecialties.map(s => (
-                <button key={s} className={`btn ${form.specialties.includes(s) ? "btn-blue" : "btn-g"}`} style={{ padding: "2px 6px", fontSize: 9 }} onClick={() => toggleArray("specialties", s)}>{s}</button>
-              ))}
-            </div>
+          <div className="sep"/><div className="card-t" style={{fontSize: 12}}>🎯 Ciblage</div>
+          <div className="fg"><label className="fl">Villes</label><div style={chipContainer}>{allCities.map(c => (<button key={c} className={`btn ${form.cities.includes(c) ? "btn-p" : "btn-g"}`} style={{ padding: "2px 6px", fontSize: 9 }} onClick={() => toggleArray("cities", c)}>{c}</button>))}</div></div>
+          <div className="grid2">
+            <div className="fg"><label className="fl">Produits</label><div style={chipContainer}>{allProducts.map(p => (<button key={p} className={`btn ${form.products.includes(p) ? "btn-blue" : "btn-g"}`} style={{ padding: "2px 6px", fontSize: 9 }} onClick={() => toggleArray("products", p)}>{p}</button>))}</div></div>
+            <div className="fg"><label className="fl">Potentiel</label><div style={chipContainer}>{['A', 'B', 'C'].map(p => (<button key={p} className={`btn ${form.potentials.includes(p) ? "btn-rose" : "btn-g"}`} style={{ padding: "2px 6px", fontSize: 9 }} onClick={() => toggleArray("potentials", p)}>{p}</button>))}</div></div>
           </div>
+          <div className="fg"><label className="fl">Spécialités</label><div style={chipContainer}>{allSpecialties.map(s => (<button key={s} className={`btn ${form.specialties.includes(s) ? "btn-blue" : "btn-g"}`} style={{ padding: "2px 6px", fontSize: 9 }} onClick={() => toggleArray("specialties", s)}>{s}</button>))}</div></div>
+          
+          <div className="fg">
+            <label className="fl">Exclure des médecins</label>
+            <select multiple className="fs" style={{height: 50}} value={form.excludeIds} onChange={e => setForm(p => ({...p, excludeIds: Array.from(e.target.selectedOptions, o => o.value)}))}>
+              {doctorOptions.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </div>
+
         </div>
 
-        <div className="vp-footer">
-          <button className="btn btn-g" onClick={onClose}>Annuler</button>
-          <button className="btn btn-p" onClick={() => onSave(form)}>💾 Sauvegarder</button>
-        </div>
+        <div className="vp-footer"><button className="btn btn-g" onClick={onClose}>Annuler</button><button className="btn btn-p" onClick={() => onSave(form)}>💾 Sauvegarder</button></div>
       </div>
     </div>
   );
 }
 
 /* ─────────────────────────────────────────────────────────────
-  Planning Page
+  Planning Page (Finale)
 ───────────────────────────────────────────────────────────── */
 function PlanningPage({ doctors, setDoctors, apiKey, provider, model }) {
   const [year, setYear] = useState(2026);
@@ -1658,25 +1770,22 @@ function PlanningPage({ doctors, setDoctors, apiKey, provider, model }) {
   const storageKey = useMemo(() => `medrep_planning_${monthKey(year, monthIndex)}`, [year, monthIndex]);
   const workdays = useMemo(() => listWorkdays(year, monthIndex), [year, monthIndex]);
   const docById = useMemo(() => { const m = new Map(); doctors.forEach(d => m.set(d.id, d)); return m; }, [doctors]);
-  
+  const allReports = useMemo(() => loadJSON("medrep_reports_v1", {}), []);
+
   const [planState, setPlanState] = useState(() => {
     const saved = loadJSON(storageKey, null);
     if (saved?.plan) return saved;
-    return generatePlanning({ doctors, year, monthIndex, perDay, directives });
+    return generatePlanning({ doctors, year, monthIndex, perDay, directives, allReports });
   });
 
   useEffect(() => saveJSON("medrep_directives", directives), [directives]);
   useEffect(() => { regenerate(); }, [directives, year, monthIndex, perDay, doctors]);
 
-  const regenerate = () => setPlanState(generatePlanning({ doctors, year, monthIndex, perDay, directives }));
+  const regenerate = () => setPlanState(generatePlanning({ doctors, year, monthIndex, perDay, directives, allReports }));
   const clearMonth = () => { const blank = {}; workdays.forEach(d => (blank[d] = [])); setPlanState({ plan: blank, backlog: doctors.map(d => d.id), meta: { year, monthIndex, perDay } }); };
 
   const saveDirective = (dir) => {
-    setDirectives(prev => {
-      const exists = prev.find(d => d.id === dir.id);
-      if (exists) return prev.map(d => d.id === dir.id ? dir : d);
-      return [...prev, dir];
-    });
+    setDirectives(prev => { const exists = prev.find(d => d.id === dir.id); if (exists) return prev.map(d => d.id === dir.id ? dir : d); return [...prev, dir]; });
     setShowDirectiveModal(false); setEditingDirective(null);
   };
 
@@ -1703,22 +1812,45 @@ function PlanningPage({ doctors, setDoctors, apiKey, provider, model }) {
   const onDropToBacklog = () => { if (!dragId) return; isDraggingRef.current = false; setPlanState(prev => { const plan = { ...prev.plan }; Object.keys(plan).forEach(k => { plan[k] = (plan[k] || []).filter(id => id !== dragId); }); const backlog = [dragId, ...(prev.backlog || []).filter(id => id !== dragId)]; return { ...prev, plan, backlog }; }); setDragId(null); setDropDay(null); setDropBacklog(false); };
   const removeFromDay = (day, id) => { setPlanState(prev => { const plan = { ...prev.plan, [day]: (prev.plan[day] || []).filter(x => x !== id) }; const backlog = [id, ...(prev.backlog || []).filter(x => x !== id)]; return { ...prev, plan, backlog }; }); };
 
+  const openMap = (d) => { const query = encodeURIComponent(`${d.name} ${d.sector || ''} ${d.city}`); window.open(`https://www.google.com/maps/search/${query}`, '_blank'); };
+
   const totalScheduled = Object.values(planState.plan || {}).flat().length;
   const activeDays = Object.entries(planState.plan || {}).filter(([, arr]) => (arr || []).length > 0).length;
   const weeks = useMemo(() => groupWorkdaysByWeek(workdays), [workdays]);
   const realBacklog = useMemo(() => { const scheduled = new Set(Object.values(planState.plan || {}).flat()); return doctors.filter(d => !scheduled.has(d.id)).map(d => d.id); }, [doctors, planState.plan]);
   const [planTab, setPlanTab] = useState("planning");
+  
+  // Helper pour affichage
+  const dayLabels = {1: "Lun", 2: "Mar", 3: "Mer", 4: "Jeu", 5: "Ven"};
 
   return (
     <div className="content">
       <div className="vp-tab-row" style={{ marginBottom: 14 }}> <button className={`vp-tab${planTab === "planning" ? " active" : ""}`} onClick={() => setPlanTab("planning")}>📅 Planning</button> <button className={`vp-tab${planTab === "route" ? " active" : ""}`} onClick={() => setPlanTab("route")}>🗺️ Tournée</button> </div>
       {planTab === "route" && <div className="card" style={{ marginBottom: 14 }}><div className="card-t">🗺️ Tournée</div><RouteOptimizerPanel doctors={doctors} planState={planState} docById={docById} /></div>}
       {planTab === "planning" && ( <>
-        <div className="pl-toolbar"> <div style={{ minWidth: 150 }}><label className="fl">Mois</label><select className="fs" value={monthIndex} onChange={e => setMonthIndex(parseInt(e.target.value, 10))}>{MFR.map((m, i) => <option key={m} value={i}>{m}</option>)}</select></div> <div style={{ minWidth: 100 }}><label className="fl">Année</label><input className="fi" type="number" value={year} onChange={e => setYear(parseInt(e.target.value || "2026", 10))} /></div> <div style={{ minWidth: 120 }}><label className="fl">Visites / jour</label><input className="fi" type="number" min={3} max={12} value={perDay} onChange={e => setPerDay(parseInt(e.target.value || "6", 10))} /></div> <div style={{ display: "flex", gap: 8 }}> <button className="btn btn-blue" onClick={() => { setEditingDirective(null); setShowDirectiveModal(true); }}>📋 Règles</button> <button className="btn btn-p" onClick={regenerate}>⚡ Générer</button> <button className="btn btn-g" onClick={clearMonth}>🧹 Vider</button> </div> <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}> <span className="pill">📅 {activeDays} jours</span> <span className="pill" style={{ borderColor: "rgba(0,212,170,.35)" }}>✅ {totalScheduled} planifiées</span> </div> </div>
-        {directives.length > 0 && <div className="card" style={{ marginBottom: 10, padding: "8px 12px", display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}> <span style={{ fontSize: 11, fontWeight: 700 }}>Règles actives:</span> {directives.filter(d => d.isActive).map(d => <span key={d.id} className="pill" style={{ borderColor: "var(--violet)", color: "var(--violet)", cursor: 'pointer' }} onClick={() => { setEditingDirective(d); setShowDirectiveModal(true); }}> {d.name} (S{d.week}) <span style={{ marginLeft: 4, opacity: 0.6 }} onClick={(e) => { e.stopPropagation(); deleteDirective(d.id); }}>✕</span> </span> )} </div> }
-        <div className="ok" style={{ marginBottom: 12 }}>✅ Planning persistant. <b>Clic sur 📋</b> pour préparer.</div>
-        <div className="card" style={{ marginBottom: 12 }}> <div className="card-t">Backlog <span className="pill">{realBacklog.length}</span></div> <div onDragOver={e => { e.preventDefault(); setDropBacklog(true); }} onDragLeave={() => setDropBacklog(false)} onDrop={e => { e.preventDefault(); onDropToBacklog(); }} className={dropBacklog ? "drop-hint" : ""} style={{ padding: 10, borderRadius: 12, minHeight: 70 }}> {realBacklog.length === 0 && <div className="empty" style={{ padding: 18 }}>Tout est planifié ✅</div>} <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(200px,1fr))", gap: 10 }}> {realBacklog.slice(0, 40).map(id => { const d = docById.get(id); if (!d) return null; return ( <div key={id} className={`chip chip-clickable ${dragId === id ? "dragging" : ""}`} draggable onDragStart={() => { isDraggingRef.current = true; setDragId(id); }} onDragEnd={() => { isDraggingRef.current = false; setDragId(null); setDropBacklog(false); }}> <div className="chip-l" onClick={() => openVisitPrep(id)}><div className="chip-n">{d.name}</div><div className="chip-s">{d.city}</div></div> <div style={{ display: "flex", gap: 4, alignItems: "center" }}><span className={`tag t${d.potential || "C"}`}>{d.potential || "C"}</span><button className="chip-eye" onClick={e => { e.stopPropagation(); openVisitPrep(id); }}>📋</button></div> </div> ); })} </div> </div> </div>
-        {weeks.map((weekDays, wi) => { const weekVisits = weekDays.reduce((acc, day) => acc + ((planState.plan?.[day] || []).length), 0); const weekTarget = weekDays.length * perDay; return ( <div key={`week_${wi}`} className="week-block"> <div className="week-head"><div><div className="week-title">Semaine {wi + 1}</div><div className="week-sub">{weekDays.length}j · {weekVisits}/{weekTarget}</div></div></div> <div className="pl-grid-week"> {weekDays.map(day => { const dt = new Date(day), list = planState.plan?.[day] || [], isClDay = isWedThu(day); const isDirectiveDay = directives.some(dir => dir.week === (wi+1) && dir.days.includes(dt.getDay())); return ( <div key={day} className={`pl-day ${isClDay ? "cl" : ""} ${isDirectiveDay ? "full" : ""}`} onDragOver={e => { e.preventDefault(); setDropDay(day); }} onDrop={e => { e.preventDefault(); onDropToDay(day); }}> <div className="pl-dh"><div><div className="pl-dn">{DFR[dt.getDay()]} {dt.getDate()}</div>{isDirectiveDay && <div className="mini" style={{color:"var(--violet)"}}>📋 Directive</div>}</div><span className="pill">{list.length}/{perDay}</span></div> <div className="pl-vs"> {list.map(id => { const d = docById.get(id); if (!d) return null; return ( <div key={id} className="chip" draggable onDragStart={() => { isDraggingRef.current = true; setDragId(id); }}> <div className="chip-l" onClick={() => openVisitPrep(id)} style={{ cursor: "pointer" }}><div className="chip-n">{d.name}</div><div className="chip-s">{d.city}</div></div> <div style={{ display: "flex", gap: 4 }}><button className="chip-eye" onClick={() => openVisitPrep(id)}>📋</button><button className="btn btn-g" style={{ padding: "2px 6px", fontSize: 10 }} onClick={() => removeFromDay(day, id)}>✕</button></div> </div> ); })} </div> </div> ); })} </div> </div> ); })}
+        <div className="pl-toolbar"> <div style={{ minWidth: 150 }}><label className="fl">Mois</label><select className="fs" value={monthIndex} onChange={e => setMonthIndex(parseInt(e.target.value, 10))}>{MFR.map((m, i) => <option key={m} value={i}>{m}</option>)}</select></div> <div style={{ minWidth: 100 }}><label className="fl">Année</label><input className="fi" type="number" value={year} onChange={e => setYear(parseInt(e.target.value || "2026", 10))} /></div> <div style={{ minWidth: 120 }}><label className="fl">Visites / jour</label><input className="fi" type="number" min={3} max={12} value={perDay} onChange={e => setPerDay(parseInt(e.target.value || "6", 10))} /></div> <div style={{ display: "flex", gap: 8 }}> <button className="btn btn-blue" onClick={() => { setEditingDirective(null); setShowDirectiveModal(true); }}>📋 Règles Pro</button> <button className="btn btn-p" onClick={regenerate}>⚡ Générer</button> <button className="btn btn-g" onClick={clearMonth}>🧹 Vider</button> </div> <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}> <span className="pill">📅 {activeDays} jours</span> <span className="pill" style={{ borderColor: "rgba(0,212,170,.35)" }}>✅ {totalScheduled} planifiées</span> </div> </div>
+        {directives.length > 0 && <div className="card" style={{ marginBottom: 10, padding: "8px 12px", display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}> <span style={{ fontSize: 11, fontWeight: 700 }}>Règles actives:</span> {directives.filter(d => d.isActive).map(d => <span key={d.id} className="pill" style={{ borderColor: "var(--violet)", color: "var(--violet)", cursor: 'pointer' }} onClick={() => { setEditingDirective(d); setShowDirectiveModal(true); }}> {d.name} (S{d.week}, P{d.priority || 5}) <span style={{ marginLeft: 4, opacity: 0.6 }} onClick={(e) => { e.stopPropagation(); deleteDirective(d.id); }}>✕</span> </span> )} </div> }
+        <div className="ok" style={{ marginBottom: 12 }}>✅ Algo Pro actif (Préférences & Clusters). <b>Clic sur 📋</b> pour préparer.</div>
+        <div className="card" style={{ marginBottom: 12 }}> <div className="card-t">Backlog <span className="pill">{realBacklog.length}</span></div> <div onDragOver={e => { e.preventDefault(); setDropBacklog(true); }} onDragLeave={() => setDropBacklog(false)} onDrop={e => { e.preventDefault(); onDropToBacklog(); }} className={dropBacklog ? "drop-hint" : ""} style={{ padding: 10, borderRadius: 12, minHeight: 70 }}> {realBacklog.length === 0 && <div className="empty" style={{ padding: 18 }}>Tout est planifié ✅</div>} <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(200px,1fr))", gap: 10 }}> {realBacklog.slice(0, 40).map(id => { const d = docById.get(id); if (!d) return null; return ( <div key={id} className={`chip chip-clickable ${dragId === id ? "dragging" : ""}`} draggable onDragStart={() => { isDraggingRef.current = true; setDragId(id); }} onDragEnd={() => { isDraggingRef.current = false; setDragId(null); setDropBacklog(false); }}> <div className="chip-l" onClick={() => openVisitPrep(id)}><div className="chip-n">{d.name}</div><div className="chip-s">{d.city} {d.preferredDay ? <span style={{color:"var(--teal)"}}>({dayLabels[d.preferredDay]})</span> : ""}</div></div> <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+          <button className="chip-eye" onClick={e => { e.stopPropagation(); openMap(d); }} title="Localiser">📍</button>
+          <span className={`tag t${d.potential || "C"}`}>{d.potential || "C"}</span>
+          <button className="chip-eye" onClick={e => { e.stopPropagation(); openVisitPrep(id); }}>📋</button>
+        </div> </div> ); })} </div> </div> </div>
+        {weeks.map((weekDays, wi) => { const weekVisits = weekDays.reduce((acc, day) => acc + ((planState.plan?.[day] || []).length), 0); const weekTarget = weekDays.length * perDay; return ( <div key={`week_${wi}`} className="week-block"> <div className="week-head"><div><div className="week-title">Semaine {wi + 1}</div><div className="week-sub">{weekDays.length}j · {weekVisits}/{weekTarget}</div></div></div> <div className="pl-grid-week"> {weekDays.map(day => { const dt = new Date(day), list = planState.plan?.[day] || [], isClDay = isWedThu(day); const isDirectiveDay = directives.some(dir => dir.week === (wi+1) && dir.days.includes(dt.getDay()));
+                
+                // Affichage Cluster
+                const locationCount = {}; 
+                list.forEach(id => { const doc = docById.get(id); if(doc) { const loc = (doc.sector && /clinique|hôpital|center/i.test(doc.sector)) ? doc.sector : doc.city; locationCount[loc] = (locationCount[loc] || 0) + 1; } });
+                const dominantLocation = Object.entries(locationCount).sort((a,b) => b[1] - a[1])[0];
+
+                return ( <div key={day} className={`pl-day ${isClDay ? "cl" : ""} ${isDirectiveDay ? "full" : ""}`} onDragOver={e => { e.preventDefault(); setDropDay(day); }} onDrop={e => { e.preventDefault(); onDropToDay(day); }}> <div className="pl-dh"><div><div className="pl-dn">{DFR[dt.getDay()]} {dt.getDate()}</div>
+                  {dominantLocation && (<div className="soft-badge ok" style={{marginTop:2}}>📍 {dominantLocation[0]} ({dominantLocation[1]})</div>)}
+                  {isDirectiveDay && <div className="mini" style={{color:"var(--violet)"}}>📋 Directive</div>}
+                </div><span className="pill">{list.length}/{perDay}</span></div> <div className="pl-vs"> {list.map(id => { const d = docById.get(id); if (!d) return null; return ( <div key={id} className="chip" draggable onDragStart={() => { isDraggingRef.current = true; setDragId(id); }}> <div className="chip-l" onClick={() => openVisitPrep(id)} style={{ cursor: "pointer" }}><div className="chip-n">{d.name}</div><div className="chip-s">{d.city}</div></div> <div style={{ display: "flex", gap: 4 }}>
+                  <button className="chip-eye" onClick={() => openMap(d)} title="Localiser">📍</button>
+                  <button className="chip-eye" onClick={() => openVisitPrep(id)}>📋</button>
+                  <button className="btn btn-g" style={{ padding: "2px 6px", fontSize: 10 }} onClick={() => removeFromDay(day, id)}>✕</button>
+                </div> </div> ); })} </div> </div> ); })} </div> </div> ); })}
       </> )}
     
       {showDirectiveModal && <DirectiveModal directive={editingDirective} onSave={saveDirective} onClose={() => { setShowDirectiveModal(false); setEditingDirective(null); }} doctors={doctors} />}
