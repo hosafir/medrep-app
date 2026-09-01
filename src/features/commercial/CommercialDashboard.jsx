@@ -5,9 +5,13 @@ import { MFR, monthKey } from "../../lib/dates.js";
 import { computePredictiveScore, scoreColor } from "../../lib/insights.js";
 
 import { useData } from "../../store/dataContext.js";
+import {
+  elapsedRatioForPeriod, filterSales, formatMAD, groupBy, growth, lastPeriods,
+  objectiveProgress, periodLabel, sumSales,
+} from "../../lib/sales.js";
 
 export function CommercialDashboard({doctors,setPage,apiKey,provider,model, activeProduct}){
-  const { reports, monthlyTarget } = useData();
+  const { reports, monthlyTarget, sales, objectives, accounts } = useData();
   const totalReports=useMemo(()=>Object.values(reports).reduce((s,arr)=>s+(arr?.length||0),0),[reports]);
   const totalWithReports=useMemo(()=>Object.keys(reports).filter(id=>reports[id]?.length>0).length,[reports]);
   const evaluated=doctors.filter(d=>d.adoptionScore!=null);
@@ -25,6 +29,27 @@ export function CommercialDashboard({doctors,setPage,apiKey,provider,model, acti
   const target = monthlyTarget || 60;
   const progressPct = Math.min(100, Math.round((totalReports / target) * 100));
   
+  // Performance commerciale (ventes importées)
+  const salesBlock = useMemo(() => {
+    if (!sales.length) return null;
+    const periods = lastPeriods(6);
+    const current = periods[periods.length - 1];
+    const value = sumSales(filterSales(sales, { period: current }));
+    const prev = sumSales(filterSales(sales, { period: periods[periods.length - 2] }));
+    const globalObj = objectives.find(o => o.scope === "global" && o.period === current)
+      || objectives.find(o => o.scope === "global" && o.period === current.slice(0, 4));
+    const progress = globalObj
+      ? objectiveProgress(globalObj, sales, { elapsedRatio: elapsedRatioForPeriod(globalObj.period) })
+      : null;
+    const top = groupBy(filterSales(sales, { periods }), "accountId").slice(0, 5).map(r => ({
+      ...r,
+      label: accounts.find(a => a.id === r.key)?.name
+        || sales.find(s => (s.accountId || "—") === r.key)?.accountName
+        || "Non rattaché",
+    }));
+    return { current, value, growth: growth(value, prev), progress, top };
+  }, [sales, objectives, accounts]);
+
   // NOUVEAU : Export PDF
   const handleExportPDF = () => window.print();
 
@@ -52,6 +77,51 @@ export function CommercialDashboard({doctors,setPage,apiKey,provider,model, acti
         </div>
         {progressPct >= 100 && <div style={{ textAlign: 'right', color: "var(--teal)", fontSize: 11, marginTop: 4 }}>🏆 Objectif atteint !</div>}
       </div>
+
+      {salesBlock && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-t">💰 Performance commerciale — {periodLabel(salesBlock.current)}</div>
+          <div className="g2">
+            <div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontFamily: "var(--fd)", fontSize: 26, fontWeight: 800 }}>{formatMAD(salesBlock.value)}</span>
+                {salesBlock.growth != null && (
+                  <span style={{ color: salesBlock.growth >= 0 ? "var(--teal)" : "var(--rose)", fontSize: 12, fontWeight: 700 }}>
+                    {salesBlock.growth > 0 ? "+" : ""}{salesBlock.growth}% vs mois précédent
+                  </span>
+                )}
+              </div>
+              {salesBlock.progress ? (
+                <div style={{ marginTop: 10 }}>
+                  <div className="mini" style={{ margin: "0 0 4px" }}>
+                    Objectif : {formatMAD(salesBlock.progress.target)} — atteint à <b>{salesBlock.progress.rate}%</b>
+                    {salesBlock.progress.projectedRate != null && ` (projection ${salesBlock.progress.projectedRate}%)`}
+                  </div>
+                  <div style={{ background: "var(--navy4)", borderRadius: 10, height: 10, overflow: "hidden" }}>
+                    <div style={{
+                      width: `${Math.min(salesBlock.progress.rate || 0, 100)}%`, height: "100%",
+                      background: salesBlock.progress.onTrack ? "var(--teal)" : "var(--amber)", transition: "width .6s ease",
+                    }} />
+                  </div>
+                </div>
+              ) : (
+                <div className="mini" style={{ marginTop: 8 }}>Aucun objectif global défini pour cette période.</div>
+              )}
+            </div>
+            <div>
+              <div className="card-t" style={{ fontSize: 12 }}>Top comptes (6 mois)</div>
+              {salesBlock.top.map(t => (
+                <div key={t.key} className="perf-bar-row">
+                  <div className="perf-lbl" style={{ fontWeight: 600 }}>{t.label}</div>
+                  <div style={{ marginLeft: "auto", fontFamily: "var(--fd)", fontSize: 11 }}>{formatMAD(t.value)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="sep" />
+          <button className="btn btn-p" style={{ fontSize: 11 }} onClick={() => setPage("sales")}>💰 Ventes &amp; objectifs →</button>
+        </div>
+      )}
 
       <div className="cd-kpi-grid">
         <div className="kpi" style={{"--ac":"var(--teal)"}}><div className="kpi-lbl">Visites totales</div><div className="kpi-val">{totalReports}</div><div className="kpi-d" style={{color:"var(--teal)"}}>comptes-rendus</div><div className="kpi-ic">📋</div></div>

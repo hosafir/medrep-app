@@ -23,6 +23,7 @@ npm test           # Vitest (logique métier)
 | Module | Contenu |
 |---|---|
 | **Dashboard** | Vue d'ensemble, alertes de visites en retard (selon la fréquence A/B/C) |
+| **Ventes & objectifs** | Import Excel/CSV des ventes (sell-in / sell-out), évolution 12 mois, MoM et YoY, top comptes, mix produits, objectifs CA/unités avec pacing et projection |
 | **Comptes (KAM)** | Établissements et groupements, contacts avec rôles, matrice influence × soutien, fiche 360°, plan de compte, priorisation et alertes |
 | **Commercial** | KPI, objectif mensuel paramétrable, activité 6 mois, freins, opportunités |
 | **Dashboard produit** | Segmentation chaud / tiède / froid, score d'adoption, top objections |
@@ -42,6 +43,7 @@ src/
 │   └── dataContext.js       Contexte + hook useData()
 ├── lib/
 │   ├── accounts.js          Modèle KAM : comptes, rôles, quadrants, stats, alertes
+│   ├── sales.js             Ventes : périodes, import, agrégats, objectifs et pacing
 │   ├── ai.js                Fournisseurs LLM et appels unifiés (callLLM)
 │   ├── aiParse.js           Découpage des réponses IA en sections
 │   ├── cloud.js             Synchro JSONBin OPTIONNELLE (désactivée par défaut)
@@ -57,6 +59,7 @@ src/
 │   ├── accounts/            Comptes KAM : liste, fiche 360°, cartographie des parties prenantes
 │   ├── assistant/ commercial/ dashboard/ doctors/
 │   ├── planning/            PlanningPage + planningEngine.js (moteur pur, testé)
+│   ├── sales/               Ventes & objectifs (import, graphiques, pilotage)
 │   ├── product/ reports/ settings/
 └── styles/GlobalStyles.jsx  Thème global + responsive + feuille d'impression
 ```

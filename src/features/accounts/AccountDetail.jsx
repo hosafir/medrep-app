@@ -4,6 +4,11 @@ import {
   stakeholderQuadrant,
 } from "../../lib/accounts.js";
 import { scoreColor } from "../../lib/insights.js";
+import {
+  accountSalesSummary, elapsedRatioForPeriod, filterSales, formatMAD, groupBy,
+  lastPeriods, objectiveProgress, periodLabel, seriesByPeriod, sumSales,
+} from "../../lib/sales.js";
+import { AnimBar } from "../../components/Charts.jsx";
 import { useData } from "../../store/dataContext.js";
 
 /* Matrice influence (Y) × soutien (X) — 4 quadrants actionnables */
@@ -55,7 +60,7 @@ function StakeholderMatrix({ contacts, onSelect }) {
 }
 
 export function AccountDetail({ account, onBack, setPage }) {
-  const { doctors, setDoctors, reports, upsertAccount } = useData();
+  const { doctors, setDoctors, reports, upsertAccount, sales, objectives } = useData();
   const [tab, setTab] = useState("contacts");
   const [linkOpen, setLinkOpen] = useState(false);
 
@@ -112,6 +117,7 @@ export function AccountDetail({ account, onBack, setPage }) {
         {[
           { id: "contacts", label: `👥 Contacts (${stats.contacts})` },
           { id: "matrix", label: "🗺️ Cartographie" },
+          { id: "sales", label: "💰 Ventes" },
           { id: "activity", label: "🕑 Activité" },
           { id: "plan", label: "🎯 Plan de compte" },
         ].map(t => (
@@ -222,6 +228,8 @@ export function AccountDetail({ account, onBack, setPage }) {
         </div>
       )}
 
+      {tab === "sales" && <AccountSales account={account} sales={sales} objectives={objectives} />}
+
       {tab === "activity" && (
         <div className="g2">
           <div className="card">
@@ -288,5 +296,110 @@ export function AccountDetail({ account, onBack, setPage }) {
         </div>
       )}
     </div>
+  );
+}
+
+/* Ventes du compte : évolution 12 mois, poids, croissance, objectifs liés */
+function AccountSales({ account, sales, objectives }) {
+  const periods = lastPeriods(12);
+  const summary = accountSalesSummary(account.id, sales, periods);
+  const serie = seriesByPeriod(filterSales(sales, { accountId: account.id }), periods);
+  const max = Math.max(...serie.map(s => s.value), 1);
+  const byProduct = groupBy(filterSales(sales, { accountId: account.id, periods }), "product");
+  const totalProduct = byProduct.reduce((s, p) => s + p.value, 0) || 1;
+  const accObjectives = objectives.filter(o => o.scope === "account" && o.refId === account.id);
+  const currentMonth = periods[periods.length - 1];
+  const currentValue = sumSales(filterSales(sales, { accountId: account.id, period: currentMonth }));
+
+  if (!summary.lines) {
+    return (
+      <div className="card">
+        <div className="empty" style={{ padding: 28 }}>
+          Aucune vente rattachée à ce compte. Importe un fichier de ventes depuis l'onglet
+          <b> 💰 Ventes</b> : les lignes sont rattachées automatiquement par le nom du compte
+          (« {account.name} »).
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="cd-kpi-grid">
+        <div className="kpi" style={{ "--ac": "var(--teal)" }}>
+          <div className="kpi-lbl">CA 12 mois</div>
+          <div className="kpi-val" style={{ fontSize: 20 }}>{formatMAD(summary.value)}</div>
+          <div className="kpi-d">sur ce compte</div><div className="kpi-ic">💰</div>
+        </div>
+        <div className="kpi" style={{ "--ac": summary.growth >= 0 ? "var(--teal)" : "var(--rose)" }}>
+          <div className="kpi-lbl">vs 12 mois N-1</div>
+          <div className="kpi-val">{summary.growth == null ? "—" : `${summary.growth > 0 ? "+" : ""}${summary.growth}%`}</div>
+          <div className="kpi-d">{formatMAD(summary.previous)}</div><div className="kpi-ic">📈</div>
+        </div>
+        <div className="kpi" style={{ "--ac": "var(--violet)" }}>
+          <div className="kpi-lbl">Poids portefeuille</div>
+          <div className="kpi-val">{summary.share}%</div>
+          <div className="kpi-d">du CA total</div><div className="kpi-ic">🥧</div>
+        </div>
+        <div className="kpi" style={{ "--ac": "var(--blue)" }}>
+          <div className="kpi-lbl">{periodLabel(currentMonth)}</div>
+          <div className="kpi-val" style={{ fontSize: 20 }}>{formatMAD(currentValue)}</div>
+          <div className="kpi-d">mois en cours</div><div className="kpi-ic">📅</div>
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 12 }}>
+        <div className="card-t">📊 Évolution du CA (12 mois)</div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 150 }}>
+          {serie.map(s => (
+            <div key={s.period} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+              <div
+                title={`${s.label} — ${formatMAD(s.value)}`}
+                style={{
+                  width: "100%", height: `${(s.value / max) * 100}%`, minHeight: s.value ? 4 : 1,
+                  background: "linear-gradient(180deg,var(--teal),rgba(0,212,170,.25))",
+                  borderRadius: "4px 4px 0 0", transition: "height .8s ease",
+                }}
+              />
+              <div style={{ fontSize: 9, color: "var(--t2)" }}>{s.label.split(" ")[0]}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="g2">
+        <div className="card">
+          <div className="card-t">💊 Mix produits</div>
+          {byProduct.map((p, i) => (
+            <div key={p.key} className="city-row">
+              <div className="city-name">{p.key}</div>
+              <AnimBar pct={(p.value / totalProduct) * 100} color="var(--blue)" delay={i * 70} />
+              <div className="city-score-val" style={{ minWidth: 90, textAlign: "right" }}>{formatMAD(p.value)}</div>
+            </div>
+          ))}
+        </div>
+        <div className="card">
+          <div className="card-t">🎯 Objectifs sur ce compte</div>
+          {accObjectives.length === 0
+            ? <div className="empty" style={{ padding: 20 }}>Aucun objectif défini pour ce compte.</div>
+            : accObjectives.map(o => {
+                const p = objectiveProgress(o, sales, { elapsedRatio: elapsedRatioForPeriod(o.period) });
+                const color = p.onTrack ? "var(--teal)" : "var(--amber)";
+                return (
+                  <div key={o.id} style={{ marginBottom: 12 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                      <span>{periodLabel(o.period)}</span>
+                      <b style={{ color }}>{p.rate ?? "—"}%</b>
+                    </div>
+                    <AnimBar pct={Math.min(p.rate || 0, 100)} color={color} height={8} />
+                    <div className="mini" style={{ margin: "4px 0 0" }}>
+                      {formatMAD(p.actual)} / {formatMAD(p.target)}
+                    </div>
+                  </div>
+                );
+              })}
+        </div>
+      </div>
+    </>
   );
 }

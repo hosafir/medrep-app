@@ -95,7 +95,7 @@ Ce que le métier de **Key Account Manager pharma** exige et qui **manque totale
 
 ## 4. Roadmap
 
-> **Avancement** — ✅ Phase 0 terminée · 🚧 Phase 1 en cours (comptes & contacts livrés)
+> **Avancement** — ✅ Phase 0 terminée · ✅ Phase 1 terminée (comptes, contacts, ventes, objectifs) · ⏭️ Phase 2 à démarrer
 
 ### ✅ Phase 0 — Assainissement — *TERMINÉE*
 1. **Découper `App.jsx`** en `src/features/{dashboard,doctors,planning,reports,assistant,settings}` + `src/lib`, `src/components`, `src/hooks`.
@@ -109,8 +109,9 @@ Ce que le métier de **Key Account Manager pharma** exige et qui **manque totale
 7. ✅ **Modèle "Compte"** : hôpitaux, cliniques, pharmacies, groupements, laboratoires ; compte parent ; rattachement des contacts ; génération automatique depuis les secteurs du portefeuille.
 8. ✅ **Contacts & rôles** (prescripteur, chef de service, pharmacien, acheteur, direction, KOL) avec matrice **influence × soutien** 2×2 et recommandations par quadrant.
    → reste à faire : org-chart hiérarchique, photo/fiche contact enrichie.
-9. ⏳ **Ventes / performance** : import Excel des ventes (sell-in, sell-out), CA réalisé vs objectif par compte, produit, période, avec courbes et YoY.
-10. **Objectifs multi-dimensions** (CA, unités, visites, couverture, fréquence) définis par produit/période, suivi automatique.
+9. ✅ **Ventes / performance** : import Excel/CSV (sell-in, sell-out) avec reconnaissance automatique des colonnes et rattachement aux comptes, CA réalisé par compte/produit/période, évolution 12 mois, croissance MoM et YoY, top comptes, mix produits.
+10. ✅ **Objectifs** (CA ou unités) globaux, par compte ou par produit, mensuels ou annuels, avec taux d'atteinte, comparaison au rythme attendu (pacing) et projection de fin de période.
+   → reste à faire : objectifs de couverture/fréquence de visite, historique des révisions d'objectifs.
 11. ✅ **Fiche Compte 360°** : contacts, cartographie, historique de visites, objectifs de prochaine visite, plan de compte (objectif + notes), indicateurs (couverture, adoption moyenne, visites 90 j, champions/opposants).
    → reste à faire : ventes, opportunités, contrats et documents dans la fiche.
 
@@ -181,8 +182,8 @@ Politique RLS : chaque utilisateur ne voit que son territoire ; les managers voi
 | Priorité | Chantier | Valeur | Effort |
 |---|---|---|---|
 | 🥇 1 | Sécurité + Auth Supabase + refactor modulaire | Très haute | Moyen |
-| 🥇 2 | Entité **Compte** + contacts/rôles (socle KAM) | Très haute | Moyen |
-| 🥈 3 | **Ventes & objectifs** (CA vs target) | Très haute | Moyen |
+| ✅ 2 | Entité **Compte** + contacts/rôles (socle KAM) — *livré* | Très haute | Moyen |
+| ✅ 3 | **Ventes & objectifs** (CA vs target) — *livré* | Très haute | Moyen |
 | 🥈 4 | Quick wins UX (liste §6) | Haute | Faible |
 | 🥉 5 | Account Plan + pipeline d'opportunités | Haute | Moyen |
 | 🥉 6 | Transcription audio automatique | Haute | Faible |

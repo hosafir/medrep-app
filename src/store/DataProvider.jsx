@@ -26,6 +26,9 @@ export function DataProvider({ children }) {
   const [reports, setReports] = useState(() => loadJSON("medrep_reports_v1", {}));
   // Comptes KAM (établissements) — les médecins/contacts y sont rattachés par `accountId`
   const [accounts, setAccounts] = useState(() => loadJSON("medrep_accounts_v1", []));
+  // Ventes (sell-in / sell-out) et objectifs commerciaux
+  const [sales, setSales] = useState(() => loadJSON("medrep_sales_v1", []));
+  const [objectives, setObjectives] = useState(() => loadJSON("medrep_objectives_v1", []));
   const [products, setProducts] = useState(() => loadJSON("medrep_products", ["Fumetil"]));
   const [activeProduct, setActiveProduct] = useState(() => loadJSON("medrep_active_product", "Fumetil"));
   const [monthlyTarget, setMonthlyTarget] = useState(() => loadJSON("medrep_monthly_target", 60));
@@ -47,6 +50,8 @@ export function DataProvider({ children }) {
       if (cloudData) {
         if (cloudData.doctors) setDoctors(stableSortDocs(cloudData.doctors.map(enrich)));
         if (cloudData.accounts) setAccounts(cloudData.accounts);
+        if (cloudData.sales) setSales(cloudData.sales);
+        if (cloudData.objectives) setObjectives(cloudData.objectives);
         if (cloudData.products) setProducts(cloudData.products);
         if (cloudData.activeProduct) setActiveProduct(cloudData.activeProduct);
         setSyncState("saved");
@@ -62,6 +67,8 @@ export function DataProvider({ children }) {
   useEffect(() => { saveJSON("medrep_doctors_v1", doctors); }, [doctors]);
   useEffect(() => { saveJSON("medrep_reports_v1", reports); }, [reports]);
   useEffect(() => { saveJSON("medrep_accounts_v1", accounts); }, [accounts]);
+  useEffect(() => { saveJSON("medrep_sales_v1", sales); }, [sales]);
+  useEffect(() => { saveJSON("medrep_objectives_v1", objectives); }, [objectives]);
   useEffect(() => { saveJSON("medrep_products", products); }, [products]);
   useEffect(() => { saveJSON("medrep_active_product", activeProduct); }, [activeProduct]);
   useEffect(() => { saveJSON("medrep_monthly_target", monthlyTarget); }, [monthlyTarget]);
@@ -72,11 +79,11 @@ export function DataProvider({ children }) {
   useEffect(() => {
     if (!cloudLoaded) return;
     const timer = setTimeout(async () => {
-      const ok = await saveCloudData({ doctors, accounts, products, activeProduct, lastSaved: new Date().toISOString() });
+      const ok = await saveCloudData({ doctors, accounts, sales, objectives, products, activeProduct, lastSaved: new Date().toISOString() });
       setSyncState(ok === false ? "error" : "saved");
     }, 3000);
     return () => clearTimeout(timer);
-  }, [doctors, accounts, products, activeProduct, cloudLoaded]);
+  }, [doctors, accounts, sales, objectives, products, activeProduct, cloudLoaded]);
 
   const upsertAccount = useCallback((account) => {
     setAccounts(prev => (prev.some(a => a.id === account.id)
@@ -105,6 +112,31 @@ export function DataProvider({ children }) {
     return { created, linked };
   }, [doctors]);
 
+  /** Ajoute des ventes importées en écrasant les lignes des mêmes période/compte/produit/canal */
+  const mergeSales = useCallback((incoming) => {
+    let added = 0, replaced = 0;
+    setSales(prev => {
+      const keyOf = s => `${s.period}|${s.accountId || s.accountName}|${s.product}|${s.channel}`;
+      const map = new Map(prev.map(s => [keyOf(s), s]));
+      for (const s of incoming) {
+        if (map.has(keyOf(s))) replaced++; else added++;
+        map.set(keyOf(s), s);
+      }
+      return [...map.values()];
+    });
+    return { added, replaced };
+  }, []);
+
+  const clearSales = useCallback(() => setSales([]), []);
+
+  const upsertObjective = useCallback((objective) => {
+    setObjectives(prev => (prev.some(o => o.id === objective.id)
+      ? prev.map(o => (o.id === objective.id ? objective : o))
+      : [...prev, objective]));
+  }, []);
+
+  const deleteObjective = useCallback((id) => setObjectives(prev => prev.filter(o => o.id !== id)), []);
+
   const addProduct = useCallback((name) => {
     const clean = (name || "").trim();
     if (!clean) return;
@@ -130,6 +162,8 @@ export function DataProvider({ children }) {
   const value = useMemo(() => ({
     doctors, setDoctors, filteredDoctors,
     accounts, setAccounts, upsertAccount, deleteAccount, generateAccountsFromPortfolio,
+    sales, setSales, mergeSales, clearSales,
+    objectives, upsertObjective, deleteObjective,
     reports, setReports,
     products, addProduct, deleteProduct,
     activeProduct, setActiveProduct,
@@ -138,6 +172,7 @@ export function DataProvider({ children }) {
     hasApi: !!apiKey.trim(),
     syncState,
   }), [doctors, filteredDoctors, accounts, upsertAccount, deleteAccount, generateAccountsFromPortfolio,
+       sales, mergeSales, clearSales, objectives, upsertObjective, deleteObjective,
        reports, products, addProduct, deleteProduct, activeProduct,
        monthlyTarget, apiKey, model, provider, syncState]);
 
