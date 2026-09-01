@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ToastProvider } from "./components/Toast.jsx";
+import { AccountsPage } from "./features/accounts/AccountsPage.jsx";
 import { Assistant } from "./features/assistant/Assistant.jsx";
 import { CommercialDashboard } from "./features/commercial/CommercialDashboard.jsx";
 import { Dashboard } from "./features/dashboard/Dashboard.jsx";
@@ -42,6 +43,7 @@ function Shell() {
       { id: "assistant", ic: provider?.icon || "✦", lbl: "Coach IA", needsApi: true },
     ]},
     { sec: "Terrain", items: [
+      { id: "accounts", ic: "🏥", lbl: "Comptes", badge: "KAM" },
       { id: "planning", ic: "📅", lbl: "Planning" },
       { id: "reports", ic: "📝", lbl: "Comptes-rendus" },
       { id: "doctors", ic: "👨‍⚕️", lbl: "Médecins" },
@@ -54,7 +56,7 @@ function Shell() {
   const TITLES = {
     dashboard: "Vue d'ensemble", commercial: "Commercial", fumetil: `Dashboard ${activeProduct}`,
     assistant: "Coach IA", planning: "Planning", reports: "Comptes-rendus",
-    doctors: "Médecins", settings: "Paramètres",
+    accounts: "Comptes clients", doctors: "Médecins & contacts", settings: "Paramètres",
   };
 
   const m = model || provider?.defaultModel;
@@ -64,6 +66,7 @@ function Shell() {
       case "commercial": return <CommercialDashboard doctors={filteredDoctors} setPage={setPage} apiKey={apiKey} provider={provider} model={m} activeProduct={activeProduct} />;
       case "fumetil": return <FumetilDashboard doctors={filteredDoctors} setPage={setPage} activeProduct={activeProduct} />;
       case "assistant": return <Assistant apiKey={apiKey} provider={provider} model={m} setPage={setPage} doctors={filteredDoctors} />;
+      case "accounts": return <AccountsPage setPage={setPage} />;
       case "planning": return <PlanningPage doctors={filteredDoctors} setDoctors={setDoctors} apiKey={apiKey} provider={provider} model={m} />;
       case "reports": return <ReportsPage doctors={filteredDoctors} setDoctors={setDoctors} apiKey={apiKey} provider={provider} model={m} setPage={setPage} />;
       case "doctors": return <DoctorsPage doctors={filteredDoctors} setDoctors={setDoctors} activeProduct={activeProduct} products={products} />;

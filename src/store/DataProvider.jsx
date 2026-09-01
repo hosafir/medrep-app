@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DataContext } from "./dataContext.js";
+import { deriveAccountsFromContacts } from "../lib/accounts.js";
 import { detectProvider } from "../lib/ai.js";
 import { loadCloudData, saveCloudData } from "../lib/cloud.js";
 import { DOCS_FALLBACK } from "../lib/fallbackDoctors.js";
@@ -23,6 +24,8 @@ export function DataProvider({ children }) {
 
   // Source de vérité unique des comptes-rendus (plus de loadJSON dispersés)
   const [reports, setReports] = useState(() => loadJSON("medrep_reports_v1", {}));
+  // Comptes KAM (établissements) — les médecins/contacts y sont rattachés par `accountId`
+  const [accounts, setAccounts] = useState(() => loadJSON("medrep_accounts_v1", []));
   const [products, setProducts] = useState(() => loadJSON("medrep_products", ["Fumetil"]));
   const [activeProduct, setActiveProduct] = useState(() => loadJSON("medrep_active_product", "Fumetil"));
   const [monthlyTarget, setMonthlyTarget] = useState(() => loadJSON("medrep_monthly_target", 60));
@@ -43,6 +46,7 @@ export function DataProvider({ children }) {
       if (!alive) return;
       if (cloudData) {
         if (cloudData.doctors) setDoctors(stableSortDocs(cloudData.doctors.map(enrich)));
+        if (cloudData.accounts) setAccounts(cloudData.accounts);
         if (cloudData.products) setProducts(cloudData.products);
         if (cloudData.activeProduct) setActiveProduct(cloudData.activeProduct);
         setSyncState("saved");
@@ -57,6 +61,7 @@ export function DataProvider({ children }) {
   // --- Persistance locale ---
   useEffect(() => { saveJSON("medrep_doctors_v1", doctors); }, [doctors]);
   useEffect(() => { saveJSON("medrep_reports_v1", reports); }, [reports]);
+  useEffect(() => { saveJSON("medrep_accounts_v1", accounts); }, [accounts]);
   useEffect(() => { saveJSON("medrep_products", products); }, [products]);
   useEffect(() => { saveJSON("medrep_active_product", activeProduct); }, [activeProduct]);
   useEffect(() => { saveJSON("medrep_monthly_target", monthlyTarget); }, [monthlyTarget]);
@@ -67,11 +72,38 @@ export function DataProvider({ children }) {
   useEffect(() => {
     if (!cloudLoaded) return;
     const timer = setTimeout(async () => {
-      const ok = await saveCloudData({ doctors, products, activeProduct, lastSaved: new Date().toISOString() });
+      const ok = await saveCloudData({ doctors, accounts, products, activeProduct, lastSaved: new Date().toISOString() });
       setSyncState(ok === false ? "error" : "saved");
     }, 3000);
     return () => clearTimeout(timer);
-  }, [doctors, products, activeProduct, cloudLoaded]);
+  }, [doctors, accounts, products, activeProduct, cloudLoaded]);
+
+  const upsertAccount = useCallback((account) => {
+    setAccounts(prev => (prev.some(a => a.id === account.id)
+      ? prev.map(a => (a.id === account.id ? account : a))
+      : [...prev, account]));
+  }, []);
+
+  const deleteAccount = useCallback((id) => {
+    setAccounts(prev => prev.filter(a => a.id !== id));
+    setDoctors(prev => prev.map(d => (d.accountId === id ? { ...d, accountId: null } : d)));
+  }, []);
+
+  /** Crée les comptes manquants à partir des secteurs du portefeuille et rattache les contacts */
+  const generateAccountsFromPortfolio = useCallback(() => {
+    let created = 0, linked = 0;
+    setAccounts(prevAccounts => {
+      const { accounts: next, links } = deriveAccountsFromContacts(doctors, prevAccounts);
+      created = next.length - prevAccounts.length;
+      setDoctors(prevDocs => prevDocs.map(d => {
+        if (!links[d.id] || d.accountId === links[d.id]) return d;
+        linked++;
+        return { ...d, accountId: links[d.id] };
+      }));
+      return next;
+    });
+    return { created, linked };
+  }, [doctors]);
 
   const addProduct = useCallback((name) => {
     const clean = (name || "").trim();
@@ -97,6 +129,7 @@ export function DataProvider({ children }) {
 
   const value = useMemo(() => ({
     doctors, setDoctors, filteredDoctors,
+    accounts, setAccounts, upsertAccount, deleteAccount, generateAccountsFromPortfolio,
     reports, setReports,
     products, addProduct, deleteProduct,
     activeProduct, setActiveProduct,
@@ -104,7 +137,8 @@ export function DataProvider({ children }) {
     apiKey, setApiKey, model, setModel, provider,
     hasApi: !!apiKey.trim(),
     syncState,
-  }), [doctors, filteredDoctors, reports, products, addProduct, deleteProduct, activeProduct,
+  }), [doctors, filteredDoctors, accounts, upsertAccount, deleteAccount, generateAccountsFromPortfolio,
+       reports, products, addProduct, deleteProduct, activeProduct,
        monthlyTarget, apiKey, model, provider, syncState]);
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;

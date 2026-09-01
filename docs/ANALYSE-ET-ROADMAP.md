@@ -93,9 +93,11 @@ Ce que le métier de **Key Account Manager pharma** exige et qui **manque totale
 
 ---
 
-## 4. Roadmap proposée
+## 4. Roadmap
 
-### Phase 0 — Assainissement (1 semaine) — *prérequis à tout le reste*
+> **Avancement** — ✅ Phase 0 terminée · 🚧 Phase 1 en cours (comptes & contacts livrés)
+
+### ✅ Phase 0 — Assainissement — *TERMINÉE*
 1. **Découper `App.jsx`** en `src/features/{dashboard,doctors,planning,reports,assistant,settings}` + `src/lib`, `src/components`, `src/hooks`.
 2. **Sécuriser** : brancher Supabase (auth + Postgres + RLS), retirer JSONBin, déplacer les appels LLM derrière une Edge Function.
 3. **Zéro erreur lint** + corriger le bug `regenerate` du planning.
@@ -103,12 +105,14 @@ Ce que le métier de **Key Account Manager pharma** exige et qui **manque totale
 5. Tests unitaires Vitest sur : scoring, génération de planning, import Excel, parsing des sections IA.
 6. PWA (installable, offline-first, file d'attente de synchronisation).
 
-### Phase 1 — Socle KAM (2–3 semaines)
-7. **Modèle "Compte"** : hôpitaux, cliniques, pharmacies, groupements ; hiérarchie ; rattachement des médecins/contacts.
-8. **Contacts & rôles** avec matrice **influence × soutien** (visuel 2×2) et org-chart.
-9. **Ventes / performance** : import Excel des ventes (sell-in, sell-out), CA réalisé vs objectif par compte, produit, période, avec courbes et YoY.
+### 🚧 Phase 1 — Socle KAM (2–3 semaines)
+7. ✅ **Modèle "Compte"** : hôpitaux, cliniques, pharmacies, groupements, laboratoires ; compte parent ; rattachement des contacts ; génération automatique depuis les secteurs du portefeuille.
+8. ✅ **Contacts & rôles** (prescripteur, chef de service, pharmacien, acheteur, direction, KOL) avec matrice **influence × soutien** 2×2 et recommandations par quadrant.
+   → reste à faire : org-chart hiérarchique, photo/fiche contact enrichie.
+9. ⏳ **Ventes / performance** : import Excel des ventes (sell-in, sell-out), CA réalisé vs objectif par compte, produit, période, avec courbes et YoY.
 10. **Objectifs multi-dimensions** (CA, unités, visites, couverture, fréquence) définis par produit/période, suivi automatique.
-11. **Fiche Compte 360°** : contacts, historique visites, ventes, opportunités, contrats, documents, prochaines actions.
+11. ✅ **Fiche Compte 360°** : contacts, cartographie, historique de visites, objectifs de prochaine visite, plan de compte (objectif + notes), indicateurs (couverture, adoption moyenne, visites 90 j, champions/opposants).
+   → reste à faire : ventes, opportunités, contrats et documents dans la fiche.
 
 ### Phase 2 — Développement client (2–3 semaines)
 12. **Account Plan** guidé (SWOT + objectifs + actions + revue trimestrielle), avec **génération IA du plan** à partir des données du compte.

@@ -4,7 +4,7 @@ export function extractAdoptionInsights(text){const raw=text||"";const sM=raw.ma
 export function extractAIMemory(text,existing={}){const raw=text||"",m={...existing};const p=raw.match(/pr[eé]f[eè]re\s+(?:les?\s+)?(.{8,60}?)(?:\.|,|\n)/i);if(p)m.preference=p[1].trim();const s=raw.match(/style\s+(?:de\s+)?(?:communication|d[''']approche)\s*:\s*(.{8,80}?)(?:\.|,|\n)/i);if(s)m.style=s[1].trim();const a=raw.match(/(?:argument|levier)\s+(?:efficace|pertinent)\s*:\s*(.{8,80}?)(?:\.|,|\n)/i);if(a)m.bestArg=a[1].trim();const o=raw.match(/Frein principal\s*:\s*(.{8,120}?)(?:\.|,|\n|$)/i);if(o)m.mainObjection=o[1].trim();return m;}
 export function computePredictiveScore(doctor,allReports){const dr=allReports[doctor.id]||[];const pot=doctor.potential==="A"?28:doctor.potential==="B"?16:6;const vis=Math.min(dr.length*6,24);const now=Date.now();const r90=dr.filter(r=>(now-new Date(r.createdAt))/86400000<=90).length;const freq=Math.min(r90*8,24);const obj=doctor.mainObjection?.trim()?-12:0;const eng=doctor.nextVisitGoal?10:0;const raw=pot+vis+freq+obj+eng;const c=Math.max(0,Math.min(100,raw));return doctor.adoptionScore!=null?Math.round(doctor.adoptionScore*0.6+c*0.4):c;}
 export function detectOpportunities(doctors,reports){const opps=[],now=Date.now();doctors.forEach(d=>{const score=d.adoptionScore;if(score!=null&&score>=55&&score<76&&d.potential!=="C")opps.push({type:"hot",doctor:d,reason:`Score ${score}/100 — proche de la conversion`,ic:"🎯"});if(d.potential==="A"&&score==null)opps.push({type:"warn",doctor:d,reason:"Potentiel A non encore évalué",ic:"⭐"});const sorted=[...(reports[d.id]||[])].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));if(sorted.length>0){const days=(now-new Date(sorted[0].createdAt))/86400000;if(days>45&&score!=null&&score>=50)opps.push({type:"risk",doctor:d,reason:`Pas vu depuis ${Math.round(days)}j — risque de refroidissement`,ic:"⚠️"});}if((reports[d.id]||[]).length===0&&d.potential==="A")opps.push({type:"warn",doctor:d,reason:"Potentiel A — aucun compte-rendu",ic:"🆕"});});const seen=new Set();return opps.filter(o=>{if(seen.has(o.doctor.id))return false;seen.add(o.doctor.id);return true;}).slice(0,8);}
-export function buildAssistantContext(doctors,reports,planning,specialty,product){
+export function buildAssistantContext(doctors,reports,planning,specialty,product,accounts=[]){
   const evaluated=doctors.filter(d=>d.adoptionScore!=null);
   const chauds=evaluated.filter(d=>d.adoptionScore>=76);
   const near=evaluated.filter(d=>d.adoptionScore>=50&&d.adoptionScore<76);
@@ -24,6 +24,10 @@ Chauds (≥76) : ${chauds.length} — ${chauds.slice(0,3).map(d=>d.name).join(",
 Proches conversion : ${near.length}
 Non vus 60j+ : ${notSeen.length}
 Aujourd'hui planifiés : ${todayDocs.length?todayDocs.map(d=>d.name).join(", "):"aucun"}
+
+--- COMPTES (KAM) ---
+Comptes suivis : ${accounts.length}${accounts.length?` — dont ${accounts.filter(a=>a.tier==="A").length} de niveau A`:""}
+${accounts.slice(0,8).map(a=>{const list=doctors.filter(d=>d.accountId===a.id);const champs=list.filter(d=>Number(d.influence)>=4&&Number(d.support)>=4).length;const blocks=list.filter(d=>Number(d.influence)>=4&&Number(d.support)<=2).length;return `- ${a.name} (${a.city||"?"}, niveau ${a.tier}) : ${list.length} contacts, ${champs} champion(s), ${blocks} opposant(s)${a.objective?`, objectif : ${a.objective}`:""}`;}).join("\n")||"- aucun compte enregistré"}
 ---`;
 }
 export function probaLabel(p){if(!p)return null;const t=p.toLowerCase();if(t.includes("élevée")||t.includes("elevee")||(parseInt(t)>=65))return{lbl:"Élevée",cls:"high",ic:"🟢"};if(t.includes("moyenne")||(parseInt(t)>=35))return{lbl:"Moyenne",cls:"med",ic:"🟡"};return{lbl:"Faible",cls:"low",ic:"🔴"};}

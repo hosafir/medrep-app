@@ -1,11 +1,20 @@
 import { useState, useEffect, useRef } from "react";
 import { SYS_PROMPT, callLLM } from "../../lib/ai.js";
 import { CHAT_HISTORY_KEY } from "../../lib/constants.js";
-import { tNow } from "../../lib/dates.js";
+import { monthKey, tNow } from "../../lib/dates.js";
 import { buildAssistantContext } from "../../lib/insights.js";
+import { useData } from "../../store/dataContext.js";
 import { getAllKnowledgeFiles, loadJSON, saveJSON, saveKnowledgeFile } from "../../lib/storage.js";
 
 export function Assistant({ apiKey, provider, model, setPage, doctors }) {
+  const { reports, accounts, activeProduct } = useData();
+  // Contexte réellement alimenté : CR, planning du mois, comptes KAM
+  const buildCtx = () => {
+    const now = new Date();
+    const planning = loadJSON(`medrep_planning_${monthKey(now.getFullYear(), now.getMonth())}`, null)?.plan || {};
+    const specialty = localStorage.getItem("medrep_user_specialty") || "";
+    return buildAssistantContext(doctors, reports, planning, specialty, activeProduct, accounts);
+  };
   // --- États ---
   const [msgs, setMsgs] = useState(() => {
     const saved = loadJSON(CHAT_HISTORY_KEY, null);
@@ -102,7 +111,7 @@ export function Assistant({ apiKey, provider, model, setPage, doctors }) {
     setMsgs(p => [...p, { role: "user", text: `📄 Analyse du fichier...`, time: tNow() }]);
     try {
       const imageData = base64 ? { image: { base64: base64, mimeType: mimeType } } : null;
-      const ctx = buildAssistantContext(doctors, {}, {}, "", "");
+      const ctx = buildCtx();
       const sys = SYS_PROMPT + ctx;
       const r = await callLLM(prompt, apiKey, provider, model, sys, imageData);
       setMsgs(p => [...p.slice(0, -1), { role: "assistant", text: r, time: tNow() }]);
@@ -119,7 +128,7 @@ export function Assistant({ apiKey, provider, model, setPage, doctors }) {
     setMsgs(p => [...p, { role: "user", text: m, time: tNow() }]);
     setLoading(true);
     try {
-      const ctx = buildAssistantContext(doctors, {}, {}, "", "");
+      const ctx = buildCtx();
       const sysExt = SYS_PROMPT + ctx;
       const r = await callLLM(m, apiKey, provider, model, sysExt);
       setMsgs(p => [...p, { role: "assistant", text: r, time: tNow() }]);

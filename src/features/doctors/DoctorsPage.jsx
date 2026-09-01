@@ -6,6 +6,7 @@ import { computePredictiveScore, priorityBadgeClass, scoreColor } from "../../li
 import { normalizeCity, normalizeText, stableSortDocs } from "../../lib/normalize.js";
 
 import { useData } from "../../store/dataContext.js";
+import { CONTACT_ROLES, accountTypeInfo } from "../../lib/accounts.js";
 
 export function DoctorsPage({ doctors, setDoctors, activeProduct, products }){
   const[q,setQ]=useState("");
@@ -83,7 +84,8 @@ export function DoctorsPage({ doctors, setDoctors, activeProduct, products }){
     finally{setImporting(false);}
   };
   
-  const { reports: allReports } = useData();
+  const { reports: allReports, accounts } = useData();
+  const accountById = useMemo(() => new Map(accounts.map(a => [a.id, a])), [accounts]);
 
   // Helper jour préféré
   const dayLabels = {1: "Lun", 2: "Mar", 3: "Mer", 4: "Jeu", 5: "Ven"};
@@ -115,6 +117,7 @@ export function DoctorsPage({ doctors, setDoctors, activeProduct, products }){
               <tr>
                 <th>Nom</th>
                 <th>Ville / Secteur</th>
+                <th>Compte</th>
                 <th style={{textAlign:'center'}}>Pot.</th>
                 <th style={{textAlign:'center'}}>Score</th>
                 <th style={{textAlign:'center'}} title="Score prédictif calculé (potentiel, fréquence de visite, freins)">Prédictif</th>
@@ -126,7 +129,7 @@ export function DoctorsPage({ doctors, setDoctors, activeProduct, products }){
             </thead>
             <tbody>
               {filtered.length === 0 && (
-                <tr><td colSpan={9}><div className="empty">Aucun médecin pour le produit "{activeProduct}".</div></td></tr>
+                <tr><td colSpan={10}><div className="empty">Aucun médecin pour le produit "{activeProduct}".</div></td></tr>
               )}
               {filtered.map(d => {
                 const pred = computePredictiveScore(d, allReports);
@@ -134,6 +137,9 @@ export function DoctorsPage({ doctors, setDoctors, activeProduct, products }){
                   <tr key={d.id}>
                     <td style={{fontWeight:700}}>{d.name}</td>
                     <td>{d.city} {d.sector ? <span className="mini" style={{opacity:0.7}}>· {d.sector}</span> : ""}</td>
+                    <td>{d.accountId && accountById.get(d.accountId)
+                      ? <span className="pill">{accountTypeInfo(accountById.get(d.accountId).type).ic} {accountById.get(d.accountId).name}</span>
+                      : <span className="mini" style={{opacity:.5}}>—</span>}</td>
                     <td style={{textAlign:'center'}}><span className={`tag t${d.potential||"C"}`}>{d.potential||"C"}</span></td>
                     <td style={{textAlign:'center', fontWeight:700, color:scoreColor(d.adoptionScore)}}>
                       {d.adoptionScore==null?"—":`${d.adoptionScore}`}
@@ -183,6 +189,29 @@ export function DoctorsPage({ doctors, setDoctors, activeProduct, products }){
             <div className="fg"><label className="fl">Nom</label><input className="fi" value={editing.name} onChange={e=>setEditing(p=>({...p,name:e.target.value}))}/></div>
             <div className="fg"><label className="fl">Ville</label><input className="fi" value={editing.city} onChange={e=>setEditing(p=>({...p,city:e.target.value}))}/></div>
             <div className="fg"><label className="fl">Secteur / Clinique</label><input className="fi" placeholder="Ex: Clinique Marjane" value={editing.sector || ""} onChange={e=>setEditing(p=>({...p,sector:e.target.value}))}/></div>
+            <div className="fg"><label className="fl">Compte (établissement)</label>
+              <select className="fs" value={editing.accountId || ""} onChange={e=>setEditing(p=>({...p, accountId: e.target.value || null}))}>
+                <option value="">— Aucun —</option>
+                {accounts.map(a => <option key={a.id} value={a.id}>{a.name}{a.city ? ` · ${a.city}` : ""}</option>)}
+              </select>
+            </div>
+            <div className="fg"><label className="fl">Rôle dans le compte</label>
+              <select className="fs" value={editing.role || "prescripteur"} onChange={e=>setEditing(p=>({...p, role: e.target.value}))}>
+                {CONTACT_ROLES.map(r => <option key={r.id} value={r.id}>{r.ic} {r.label}</option>)}
+              </select>
+            </div>
+            <div className="fg"><label className="fl">Influence (1-5)</label>
+              <select className="fs" value={editing.influence || ""} onChange={e=>setEditing(p=>({...p, influence: e.target.value ? Number(e.target.value) : null}))}>
+                <option value="">— Non qualifié —</option>
+                {[1,2,3,4,5].map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </div>
+            <div className="fg"><label className="fl">Soutien produit (1-5)</label>
+              <select className="fs" value={editing.support || ""} onChange={e=>setEditing(p=>({...p, support: e.target.value ? Number(e.target.value) : null}))}>
+                <option value="">— Non qualifié —</option>
+                {[1,2,3,4,5].map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </div>
             <div className="fg"><label className="fl">Potentiel</label><select className="fs" value={editing.potential||"B"} onChange={e=>setEditing(p=>({...p,potential:e.target.value}))}><option value="A">A</option><option value="B">B</option><option value="C">C</option></select></div>
             
             {/* NOUVEAU : Sélecteur Jour Préféré */}
